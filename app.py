@@ -1,9 +1,30 @@
+import subprocess
+import sys
+import os
+# Attempt to install missing packages
+def install_package(package):
+    try:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", package])
+        return True
+    except subprocess.CalledProcessError:
+        return False
+
+# Check and install plotly if missing
+try:
+    import plotly.express as px
+    import plotly.graph_objects as go
+except ImportError:
+    print("Plotly not found. Installing...")
+    if install_package("plotly==5.15.0"):
+        import plotly.express as px
+        import plotly.graph_objects as go
+        print("Plotly installed successfully")
+    else:
+        print("Failed to install plotly")
+# Now import other packages
 import streamlit as st
 import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
 import re
-import os
 from collections import Counter
 import nltk
 from nltk.sentiment import SentimentIntensityAnalyzer
