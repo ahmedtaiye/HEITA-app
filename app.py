@@ -1,6 +1,9 @@
 import subprocess
 import sys
 import os
+import hashlib
+
+
 # Attempt to install missing packages
 def install_package(package):
     try:
@@ -8,6 +11,7 @@ def install_package(package):
         return True
     except subprocess.CalledProcessError:
         return False
+
 
 # Check and install plotly if missing
 try:
@@ -18,9 +22,11 @@ except ImportError:
     if install_package("plotly==5.15.0"):
         import plotly.express as px
         import plotly.graph_objects as go
+
         print("Plotly installed successfully")
     else:
         print("Failed to install plotly")
+
 # Now import other packages
 import streamlit as st
 import pandas as pd
@@ -40,7 +46,12 @@ import json
 # --------------------------
 # ⚙️ STREAMLIT PAGE CONFIG MUST BE THE FIRST COMMAND
 # --------------------------
-st.set_page_config(page_title="AI & Digital Learning Insights", layout="wide", page_icon="🎓")
+st.set_page_config(
+    page_title="AI & Digital Learning Insights",
+    layout="wide",
+    page_icon="🎓",
+    initial_sidebar_state="expanded"
+)
 
 # --------------------------
 # 🛠️ NLTK DATA DOWNLOADS
@@ -48,11 +59,11 @@ st.set_page_config(page_title="AI & Digital Learning Insights", layout="wide", p
 try:
     nltk.data.find('vader_lexicon')
 except LookupError:
-    nltk.download('vader_lexicon')
+    nltk.download('vader_lexicon', quiet=True)
 try:
     nltk.data.find('stopwords')
 except LookupError:
-    nltk.download('stopwords')
+    nltk.download('stopwords', quiet=True)
 
 # --------------------------
 # 🎨 CUSTOM STYLING
@@ -98,6 +109,17 @@ st.markdown("""
         padding: 10px;
         border-radius: 10px;
         margin: 5px 0;
+    }
+    .quick-guide {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 20px;
+        border-radius: 10px;
+        margin-bottom: 20px;
+    }
+    @media (max-width: 768px) {
+        .main-header { font-size: 2rem !important; }
+        .section-header { font-size: 1.4rem !important; }
     }
 </style>
 """, unsafe_allow_html=True)
@@ -198,49 +220,94 @@ def categorize_words_into_themes(word_freq, num_themes=5):
     return themes
 
 
-# --- Function to Generate Word Cloud ---
+# --- ENHANCED INTERACTIVE WORD FREQUENCY SCATTER PLOT ---
 def interactive_word_cloud(text_data, title):
-    """Streamlit-native interactive word-cloud (no external pop-ups)."""
+    """Create an enhanced interactive word frequency visualization"""
+
     if not text_data:
-        st.warning("No text data to create a word cloud.")
+        st.warning("No text data to analyze.")
         return
 
     full_text = " ".join([t for t in text_data if t])
     if not full_text:
-        st.warning("No valid text to create a word cloud.")
+        st.warning("No valid text to analyze.")
         return
 
-    # ----------------  CONTROLS  ----------------
-    col1, col2, col3, col4 = st.columns([1, 1, 1, 2])
-    with col1:
-        max_words = st.slider("Max words", 50, 400, 200, key=f"{title}_words")
-    with col2:
-        darkness = st.slider("Background darkness", 0, 100, 0, key=f"{title}_bg")
-    with col3:
-        max_font = st.slider("Max font size", 50, 350, 150, key=f"{title}_font")
-    with col4:
-        st.write("")  # alignment spacer
-        update = st.button("🔄 Update cloud", key=f"{title}_btn")
+    # ----------------  ENHANCED CONTROLS  ----------------
+    st.markdown("### 🎛️ Analysis Controls")
+    col1, col2, col3 = st.columns(3)
 
-    # ----------------  BUILD CLOUD  ----------------
+    with col1:
+        max_words = st.slider("Words to show", 10, 100, 50, key=f"{title}_words")
+    with col2:
+        min_word_length = st.slider("Min word length", 3, 8, 4, key=f"{title}_length")
+    with col3:
+        chart_type = st.selectbox("Chart type", ["Scatter Plot", "Bar Chart", "Treemap"], key=f"{title}_chart")
+
+    # ----------------  PROCESS TEXT  ----------------
     stop_words = set(stopwords.words('english'))
     custom_stopwords = {'university', 'education', 'learning', 'student', 'technology',
-                        'digital', 'institution', 'experience', 'use'}
+                        'digital', 'institution', 'experience', 'use', 'using'}
     all_stopwords = stop_words.union(custom_stopwords)
 
-    wc = WordCloud(width=800, height=400,
-                   background_color='black' if darkness > 50 else 'white',
-                   max_words=max_words,
-                   max_font_size=max_font,
-                   stopwords=all_stopwords,
-                   colormap='tab10').generate(full_text)
+    words = re.findall(rf'\b[a-z]{{{min_word_length},}}\b', full_text.lower())
+    filtered_words = [word for word in words if word not in all_stopwords]
+    word_freq = Counter(filtered_words)
+    top_words = word_freq.most_common(max_words)
 
-    # ----------------  PLOT  ----------------
-    fig, ax = plt.subplots(figsize=(10, 5))
-    ax.imshow(wc, interpolation='bilinear')
-    ax.set_title(title, fontsize=20, color='white' if darkness > 50 else 'black')
-    ax.axis('off')
-    st.pyplot(fig)
+    if not top_words:
+        st.warning("No meaningful words found after filtering.")
+        return
+
+    # ----------------  CREATE VISUALIZATION  ----------------
+    words_list, counts_list = zip(*top_words)
+    df_words = pd.DataFrame({
+        'word': words_list,
+        'frequency': counts_list,
+        'word_length': [len(word) for word in words_list],
+        'rank': range(1, len(words_list) + 1)
+    })
+
+    with st.spinner('Generating visualization...'):
+        if chart_type == "Scatter Plot":
+            fig = px.scatter(df_words, x='rank', y='frequency', size='frequency',
+                             hover_name='word', title=f"📈 Word Frequency: {title}",
+                             size_max=30, color='frequency', color_continuous_scale='viridis')
+            fig.update_layout(xaxis_title="Word Rank", yaxis_title="Frequency", height=500)
+
+        elif chart_type == "Bar Chart":
+            fig = px.bar(df_words.head(30), x='frequency', y='word', orientation='h',
+                         title=f"📊 Top Words: {title}", color='frequency',
+                         color_continuous_scale='plasma')
+            fig.update_layout(yaxis={'categoryorder': 'total ascending'}, height=600)
+
+        else:  # Treemap
+            fig = px.treemap(df_words, path=['word'], values='frequency',
+                             title=f"🌳 Word Treemap: {title}", color='frequency',
+                             color_continuous_scale='rainbow')
+            fig.update_layout(height=500)
+
+        st.plotly_chart(fig, use_container_width=True)
+
+    # ----------------  ENHANCED ANALYSIS SECTION  ----------------
+    with st.expander("📈 Detailed Word Analysis", expanded=False):
+        col1, col2, col3, col4 = st.columns(4)
+
+        with col1:
+            st.metric("Total Unique Words", len(word_freq))
+        with col2:
+            st.metric("Most Frequent", f"'{words_list[0]}'")
+        with col3:
+            st.metric("Max Frequency", counts_list[0])
+        with col4:
+            diversity = len(word_freq) / len([w for w in full_text.split() if len(w) > 3]) if full_text else 0
+            st.metric("Diversity", f"{diversity:.1%}" if diversity > 0 else "N/A")
+
+        # Word frequency table
+        st.subheader("📋 Word Frequency Table")
+        display_df = df_words.head(20).copy()
+        st.dataframe(display_df[['rank', 'word', 'frequency', 'word_length']],
+                     use_container_width=True, height=300)
 
 
 # --------------------------
@@ -248,36 +315,45 @@ def interactive_word_cloud(text_data, title):
 # --------------------------
 @st.cache_data
 def load_data(file):
-    df = pd.read_excel(file)
-    required_cols = [
-        "Region", "Country",
-        "Position of the respondent to the Survey (Please select only one)",
-        "Which category best describes your institution?",
-        "Which are the key objectives driving digital innovation of your institution?",
-        "In which ways has the use of digital technologies enhanced the learning experience of students?",
-        "In which ways has the use of digital technologies negatively impacted the learning experience of students?",
-        "What are the main challenges identified by your institution with regard to generative AI and its impact on higher education?",
-        "What are the main opportunities identified by your institution with regard to generative AI and its impact on higher education?"
-    ]
-    for col in required_cols:
-        if col not in df.columns:
-            st.error(f"Missing column: {col}. Please ensure your file has this exact column name.")
-            return None, None
-    df = df.rename(columns={
-        "Position of the respondent to the Survey (Please select only one)": "Position",
-        "Which category best describes your institution?": "Institution_Type",
-        "Which are the key objectives driving digital innovation of your institution?": "Objectives",
-        "In which ways has the use of digital technologies enhanced the learning experience of students?": "Enhanced_Learning",
-        "In which ways has the use of digital technologies negatively impacted the learning experience of students?": "Negative_Impact",
-        "What are the main challenges identified by your institution with regard to generative AI and its impact on higher education?": "AI_Challenges",
-        "What are the main opportunities identified by your institution with regard to generative AI and its impact on higher education?": "AI_Opportunities"
-    })
-    text_cols = ["Objectives", "Enhanced_Learning", "Negative_Impact", "AI_Challenges", "AI_Opportunities"]
-    for col in text_cols:
-        df[col + "_clean"] = df[col].apply(clean_text)
-        df[col + "_sentiment"] = df[col + "_clean"].apply(get_sentiment_vader)
-        df[col + "_emotion"] = df[col + "_clean"].apply(get_ekman_emotions)
-    return df, text_cols
+    try:
+        df = pd.read_excel(file)
+        required_cols = [
+            "Region", "Country",
+            "Position of the respondent to the Survey (Please select only one)",
+            "Which category best describes your institution?",
+            "Which are the key objectives driving digital innovation of your institution?",
+            "In which ways has the use of digital technologies enhanced the learning experience of students?",
+            "In which ways has the use of digital technologies negatively impacted the learning experience of students?",
+            "What are the main challenges identified by your institution with regard to generative AI and its impact on higher education?",
+            "What are the main opportunities identified by your institution with regard to generative AI and its impact on higher education?"
+        ]
+
+        for col in required_cols:
+            if col not in df.columns:
+                st.error(f"Missing column: {col}")
+                return None, None
+
+        df = df.rename(columns={
+            "Position of the respondent to the Survey (Please select only one)": "Position",
+            "Which category best describes your institution?": "Institution_Type",
+            "Which are the key objectives driving digital innovation of your institution?": "Objectives",
+            "In which ways has the use of digital technologies enhanced the learning experience of students?": "Enhanced_Learning",
+            "In which ways has the use of digital technologies negatively impacted the learning experience of students?": "Negative_Impact",
+            "What are the main challenges identified by your institution with regard to generative AI and its impact on higher education?": "AI_Challenges",
+            "What are the main opportunities identified by your institution with regard to generative AI and its impact on higher education?": "AI_Opportunities"
+        })
+
+        text_cols = ["Objectives", "Enhanced_Learning", "Negative_Impact", "AI_Challenges", "AI_Opportunities"]
+        for col in text_cols:
+            df[col + "_clean"] = df[col].apply(clean_text)
+            df[col + "_sentiment"] = df[col + "_clean"].apply(get_sentiment_vader)
+            df[col + "_emotion"] = df[col + "_clean"].apply(get_ekman_emotions)
+
+        return df, text_cols
+
+    except Exception as e:
+        st.error(f"Error loading file: {str(e)}")
+        return None, None
 
 
 # --------------------------
@@ -286,30 +362,42 @@ def load_data(file):
 def validate_dataframe(df):
     if df is None or len(df) == 0:
         return False
-    required_cols = [
-        "Region", "Country", "Position", "Institution_Type",
-        "Objectives", "Enhanced_Learning", "Negative_Impact",
-        "AI_Challenges", "AI_Opportunities"
-    ]
-    for col in required_cols:
-        if col not in df.columns:
-            return False
-    return True
+    required_cols = ["Region", "Country", "Position", "Institution_Type",
+                     "Objectives", "Enhanced_Learning", "Negative_Impact",
+                     "AI_Challenges", "AI_Opportunities"]
+    return all(col in df.columns for col in required_cols)
 
 
 def create_enhanced_sentiment_visualization(sentiments, title):
     if not sentiments or not any(isinstance(s, (int, float)) for s in sentiments):
-        return None
-    fig = px.histogram(x=sentiments, nbins=20, title=title,
-                       labels={"x": "Sentiment Score (-1 = Negative, +1 = Positive)"},
-                       color_discrete_sequence=["#636EFA"])
-    fig.add_vline(x=0, line_dash="dash", line_color="gray", annotation_text="Neutral", annotation_position="top")
-    fig.add_vline(x=0.5, line_dash="dot", line_color="green", annotation_text="Positive", annotation_position="top")
-    fig.add_vline(x=-0.5, line_dash="dot", line_color="red", annotation_text="Negative", annotation_position="top")
-    fig.update_layout(annotations=[dict(x=0.75, y=0.9, xref="paper", yref="paper",
-                                        text="Scores > 0.5 indicate strong positive sentiment",
-                                        showarrow=False, bgcolor="rgba(255,255,255,0.8)")])
-    return fig
+        return None, None
+
+    # Create sentiment gauge
+    avg_sentiment = np.mean(sentiments)
+    gauge_fig = go.Figure(go.Indicator(
+        mode="gauge+number+delta",
+        value=avg_sentiment,
+        domain={'x': [0, 1], 'y': [0, 1]},
+        title={'text': "Average Sentiment"},
+        gauge={
+            'axis': {'range': [-1, 1]},
+            'bar': {'color': "darkblue"},
+            'steps': [
+                {'range': [-1, -0.3], 'color': "lightcoral"},
+                {'range': [-0.3, 0.3], 'color': "lightyellow"},
+                {'range': [0.3, 1], 'color': "lightgreen"}]
+        }
+    ))
+    gauge_fig.update_layout(height=300)
+
+    # Create histogram
+    hist_fig = px.histogram(x=sentiments, nbins=20, title=title,
+                            labels={"x": "Sentiment Score (-1 = Negative, +1 = Positive)"})
+    hist_fig.add_vline(x=0, line_dash="dash", line_color="gray")
+    hist_fig.add_vline(x=0.5, line_dash="dot", line_color="green")
+    hist_fig.add_vline(x=-0.5, line_dash="dot", line_color="red")
+
+    return gauge_fig, hist_fig
 
 
 def create_enhanced_emotion_visualization(emotions, title):
@@ -320,12 +408,10 @@ def create_enhanced_emotion_visualization(emotions, title):
         'joy': '#4CAF50', 'surprise': '#FFC107', 'neutral': '#9E9E9E',
         'sadness': '#2196F3', 'fear': '#673AB7', 'anger': '#F44336', 'disgust': '#795548'
     }
-    colors = [emotion_colors.get(emotion, '#9E9E9E') for emotion in emotion_counts.index]
     fig = px.pie(values=emotion_counts.values, names=emotion_counts.index, title=title,
-                 color=emotion_counts.index, color_discrete_map=emotion_colors)
-    fig.update_layout(annotations=[dict(x=0.5, y=-0.15, xref="paper", yref="paper",
-                                        text="Based on Ekman's 6 basic emotions + neutral",
-                                        showarrow=False, font=dict(size=10, color="gray"))])
+                 color=emotion_counts.index, color_discrete_map=emotion_colors,
+                 hole=0.3)  # Donut chart
+    fig.update_traces(textposition='inside', textinfo='percent+label')
     return fig
 
 
@@ -334,948 +420,541 @@ def generate_insights_summary(df_filtered, selected_col):
     emotions = df_filtered[selected_col + "_emotion"].tolist()
     if not sentiments or not emotions:
         return
+
     avg_sentiment = np.mean(sentiments)
     emotion_counts = pd.Series(emotions).value_counts()
     primary_emotion = emotion_counts.index[0] if len(emotion_counts) > 0 else "neutral"
+
     st.markdown("---")
-    st.subheader("💡 Key Insights")
-    if avg_sentiment > 0.3:
-        st.success(
-            f"**Overall Positive Sentiment**: Responses show generally positive feelings (average score: {avg_sentiment:.2f})")
-    elif avg_sentiment < -0.3:
-        st.error(
-            f"**Overall Negative Sentiment**: Responses show generally negative feelings (average score: {avg_sentiment:.2f})")
-    else:
-        st.info(f"**Mixed Sentiment**: Responses show neutral or mixed feelings (average score: {avg_sentiment:.2f})")
-    if primary_emotion == "joy":
-        st.success(f"**Primary Emotion: Joy** - Respondents express positive feelings about this topic")
-    elif primary_emotion in ["anger", 'disgust', 'sadness']:
-        st.error(
-            f"**Primary Emotion: {primary_emotion.title()}** - Respondents express negative feelings about this topic")
-    elif primary_emotion == "fear":
-        st.warning(f"**Primary Emotion: Fear** - Respondents express concerns or anxieties about this topic")
-    else:
-        st.info(f"**Primary Emotion: {primary_emotion.title()}** - Respondents show varied emotional responses")
+    st.subheader("💡 Key Insights Dashboard")
+
+    # Create insight cards
+    col1, col2, col3, col4 = st.columns(4)
+
+    with col1:
+        if avg_sentiment > 0.3:
+            st.success(f"😊 Positive\n{avg_sentiment:.2f}")
+        elif avg_sentiment < -0.3:
+            st.error(f"😟 Negative\n{avg_sentiment:.2f}")
+        else:
+            st.info(f"😐 Mixed\n{avg_sentiment:.2f}")
+
+    with col2:
+        detailed_responses = len([r for r in df_filtered[selected_col + "_clean"] if len(str(r)) > 10])
+        st.info(f"🗣️ Detailed\n{detailed_responses} responses")
+
+    with col3:
+        if primary_emotion == "joy":
+            st.success(f"🎭 {primary_emotion.title()}")
+        elif primary_emotion in ["anger", 'disgust', 'sadness']:
+            st.error(f"🎭 {primary_emotion.title()}")
+        else:
+            st.info(f"🎭 {primary_emotion.title()}")
+
+    with col4:
+        unique_words = len(set(' '.join(df_filtered[selected_col + "_clean"].astype(str)).split()))
+        st.success(f"📚 Vocabulary\n{unique_words} words")
 
 
-# --- Function to create a box plot for comparative analysis ---
+# --- COMPARATIVE VISUALIZATIONS ---
 def create_comparative_box_plot(df, col1, col2, title):
-    """Create a comparative box plot for sentiment scores."""
-    df_melted = pd.melt(df, id_vars=[col1, col2], value_vars=[col1 + "_sentiment", col2 + "_sentiment"])
-    fig = px.box(df_melted, x="variable", y="value",
-                 title=title, color="variable",
-                 labels={'variable': 'Topic', 'value': 'Sentiment Score'},
-                 color_discrete_map={col1 + "_sentiment": "#1f77b4", col2 + "_sentiment": "#d62728"})
+    df_melted = pd.melt(df, value_vars=[col1 + "_sentiment", col2 + "_sentiment"])
+    fig = px.box(df_melted, x="variable", y="value", title=title,
+                 color="variable", labels={'variable': 'Topic', 'value': 'Sentiment Score'})
     fig.update_layout(xaxis_title="Topic", yaxis_title="Sentiment Score")
     return fig
 
 
-# --- New Function to Create Comparative Sunburst Chart (improved for clarity) ---
 def create_comparative_sunburst(df, demographic_col, text_col):
-    """Generates a sunburst chart to compare a text metric across a demographic."""
     df_grouped = df.groupby([demographic_col, text_col]).size().reset_index(name='count')
-
     fig = px.sunburst(df_grouped, path=[demographic_col, text_col], values='count',
-                      title=f"Breakdown of {text_col.replace('_', ' ')} by {demographic_col}",
-                      color=text_col,
-                      color_discrete_map={
-                          'joy': '#4CAF50', 'surprise': '#FFC107', 'neutral': '#9E9E9E',
-                          'sadness': '#2196F3', 'fear': '#673AB7', 'anger': '#F44336',
-                          'disgust': '#795548', 'Positive': '#28a745', 'Negative': '#dc3545',
-                          'Neutral': '#6c757d'
-                      })
-    fig.update_layout(height=600)
+                      title=f"Breakdown by {demographic_col}")
+    fig.update_layout(height=500)
     return fig
 
 
-# --- New Function to Create Comparative Top Words Bar Chart ---
-def create_top_words_comparison(df, demographic_col, text_col, top_n=10):
-    st.subheader(f"Top {top_n} Words by {demographic_col}")
-    categories = df[demographic_col].dropna().unique()
-    if len(categories) < 2:
-        st.warning(f"Not enough unique categories in '{demographic_col}' to perform a comparison.")
-        return
-    comparison_data = []
-    full_text_col = text_col + '_clean'
-    for category in categories:
-        texts = df[df[demographic_col] == category][full_text_col].tolist()
-        if not texts:
-            continue
-        full_text = " ".join([t for t in texts if t])
-        words = re.findall(r'\b[a-z]{3,}\b', full_text.lower())
-        stop_words = set(stopwords.words('english'))
-        filtered_words = [word for word in words if word not in stop_words]
-        word_counts = Counter(filtered_words)
-        for word, count in word_counts.most_common(top_n):
-            comparison_data.append({'Demographic': category, 'Word': word, 'Count': count})
-    if not comparison_data:
-        st.warning("No data to compare top words.")
-        return
-    comp_df = pd.DataFrame(comparison_data)
-    fig = px.bar(comp_df, x='Word', y='Count', color='Demographic',
-                 barmode='group', title=f"Top {top_n} Words: Comparative Analysis")
-    st.plotly_chart(fig, use_container_width=True)
-
-
-def add_visualization_help():
-    """Add helpful tooltips and explanations for visualizations"""
-    with st.expander("ℹ️ How to interpret these visualizations"):
-        st.markdown("""
-        ### Understanding the Charts
-
-        **Word Cloud**:
-        - Larger words appear more frequently in responses
-        - Word size indicates importance/frequency
-
-        **Sentiment Analysis**:
-        - Scores range from -1 (very negative) to +1 (very positive)
-        - Values near 0 indicate neutral sentiment
-        - The histogram shows distribution of sentiment scores
-
-        **Emotion Analysis**:
-        - Based on Ekman's 6 basic emotions + neutral
-        - Pie chart shows proportion of each emotion detected
-
-        **Thematic Analysis**:
-        - Groups related words into meaningful themes
-        - Bar chart shows frequency of words within each theme
-        """)
-
-
 # --------------------------
-# 🤖 VISUALIZATION INTERPRETER CHATBOT (NEW)
+# 🤖 ENHANCED DYNAMIC AI CHAT SYSTEM
 # --------------------------
-def create_visualization_interpreter(df_filtered, selected_col, sentiment_chart, emotion_chart, themes,
-                                     analysis_type="question"):
-    """Create a chatbot that interprets visualization results"""
+def get_data_context(df_filtered, selected_col=None):
+    """Create comprehensive data context for AI responses"""
+    if df_filtered is None or len(df_filtered) == 0:
+        return {}
+
+    context = {
+        'total_responses': len(df_filtered),
+        'regions': df_filtered['Region'].dropna().unique().tolist(),
+        'countries': df_filtered['Country'].dropna().unique().tolist(),
+        'institution_types': df_filtered['Institution_Type'].dropna().unique().tolist(),
+        'positions': df_filtered['Position'].dropna().unique().tolist()
+    }
+
+    if selected_col:
+        # Add question-specific context
+        sentiments = df_filtered[selected_col + "_sentiment"].dropna().tolist()
+        emotions = df_filtered[selected_col + "_emotion"].dropna().tolist()
+        responses = df_filtered[selected_col + "_clean"].dropna().tolist()
+
+        context.update({
+            'current_question': selected_col.replace('_', ' ').title(),
+            'avg_sentiment': np.mean(sentiments) if sentiments else 0,
+            'sentiment_distribution': {
+                'positive': len([s for s in sentiments if s > 0.3]),
+                'neutral': len([s for s in sentiments if -0.3 <= s <= 0.3]),
+                'negative': len([s for s in sentiments if s < -0.3])
+            },
+            'emotion_counts': pd.Series(emotions).value_counts().to_dict(),
+            'sample_responses': responses[:3] if responses else [],
+            'total_words': len(' '.join(responses).split()) if responses else 0
+        })
+
+    return context
+
+
+def analyze_user_question(question, data_context):
+    """Analyze what the user is asking about"""
+    question_lower = question.lower()
+
+    analysis = {
+        'question_type': 'general',
+        'topics': [],
+        'demographics': [],
+        'needs_comparison': False,
+        'needs_sentiment': False,
+        'needs_emotion': False
+    }
+
+    # Detect question type
+    if any(word in question_lower for word in ['sentiment', 'feeling', 'mood', 'positive', 'negative']):
+        analysis['needs_sentiment'] = True
+        analysis['question_type'] = 'sentiment'
+
+    if any(word in question_lower for word in ['emotion', 'feeling', 'joy', 'anger', 'fear', 'sadness']):
+        analysis['needs_emotion'] = True
+        analysis['question_type'] = 'emotion'
+
+    if any(word in question_lower for word in ['compare', 'difference', 'versus', 'vs', 'between']):
+        analysis['needs_comparison'] = True
+        analysis['question_type'] = 'comparison'
+
+    # Detect demographics mentioned
+    for region in data_context.get('regions', []):
+        if region and isinstance(region, str) and region.lower() in question_lower:
+            analysis['demographics'].append(('region', region))
+
+    for country in data_context.get('countries', []):
+        if country and isinstance(country, str) and country.lower() in question_lower:
+            analysis['demographics'].append(('country', country))
+
+    for inst_type in data_context.get('institution_types', []):
+        if inst_type and isinstance(inst_type, str) and inst_type.lower() in question_lower:
+            analysis['demographics'].append(('institution_type', inst_type))
+
+    return analysis
+
+
+def generate_dynamic_response(question, data_context, analysis, themes=None):
+    """Generate a data-driven response based on the actual analysis"""
+
+    response_parts = []
+    response_parts.append("**Based on my analysis of the survey data:**")
+
+    # Add sentiment information if relevant
+    if analysis['needs_sentiment'] and 'avg_sentiment' in data_context:
+        avg_sentiment = data_context['avg_sentiment']
+        sentiment_desc = "positive" if avg_sentiment > 0.3 else "negative" if avg_sentiment < -0.3 else "neutral"
+        response_parts.append(
+            f"📊 **Sentiment Analysis**: The overall sentiment is **{sentiment_desc}** (average score: {avg_sentiment:.3f}).")
+
+        dist = data_context.get('sentiment_distribution', {})
+        if dist:
+            response_parts.append(f"   • {dist.get('positive', 0)} positive responses")
+            response_parts.append(f"   • {dist.get('neutral', 0)} neutral responses")
+            response_parts.append(f"   • {dist.get('negative', 0)} negative responses")
+
+    # Add emotion information if relevant
+    if analysis['needs_emotion'] and 'emotion_counts' in data_context:
+        emotion_counts = data_context['emotion_counts']
+        if emotion_counts:
+            primary_emotion = max(emotion_counts.items(), key=lambda x: x[1]) if emotion_counts else (None, 0)
+            if primary_emotion[0]:
+                response_parts.append(
+                    f"🎭 **Emotion Analysis**: The dominant emotion is **{primary_emotion[0]}** ({primary_emotion[1]} responses).")
+
+    # Add demographic insights
+    if analysis['demographics']:
+        for demo_type, demo_value in analysis['demographics']:
+            response_parts.append(
+                f"🌍 **Regional Insight**: Responses from **{demo_value}** show unique patterns worth exploring.")
+
+    # Add thematic insights
+    if themes and analysis['question_type'] != 'comparison':
+        theme_list = list(themes.keys())[:3]
+        if theme_list:
+            response_parts.append(f"🧠 **Key Themes**: {', '.join(theme_list)}")
+
+    # Add data context
+    response_parts.append(f"📈 **Data Summary**: Analysis based on {data_context['total_responses']} survey responses.")
+
+    # Add actionable insight
+    if 'avg_sentiment' in data_context:
+        avg_sentiment = data_context['avg_sentiment']
+        if avg_sentiment > 0.3:
+            response_parts.append(
+                "💡 **Recommendation**: The positive sentiment suggests this is an area of strength to build upon.")
+        elif avg_sentiment < -0.3:
+            response_parts.append("💡 **Recommendation**: Consider addressing the concerns raised in these responses.")
+        else:
+            response_parts.append("💡 **Recommendation**: Mixed responses suggest opportunities for improvement.")
+
+    return "\n\n".join(response_parts)
+
+
+def create_dynamic_ai_chat(df_filtered, selected_col=None, themes=None, tab_name="main"):
+    """Enhanced AI chat with dynamic data-driven responses"""
 
     st.markdown("---")
-    st.markdown('<h2 class="section-header">🤖 Visualization Interpreter</h2>', unsafe_allow_html=True)
+    st.markdown('<h3 class="section-header">💬 Dynamic AI Assistant</h3>', unsafe_allow_html=True)
 
-    # Extract key metrics for context
-    sentiments = df_filtered[selected_col + "_sentiment"].tolist()
-    emotions = df_filtered[selected_col + "_emotion"].tolist()
+    # Initialize chat history with unique key for each tab
+    chat_history_key = f"dynamic_chat_history_{tab_name}"
+    if chat_history_key not in st.session_state:
+        st.session_state[chat_history_key] = []
 
-    avg_sentiment = np.mean(sentiments) if sentiments else 0
-    emotion_counts = pd.Series(emotions).value_counts()
-    primary_emotion = emotion_counts.index[0] if len(emotion_counts) > 0 else "neutral"
-
-    # Get top words for word cloud context
-    def get_top_words(texts, n=10):
-        if not texts:
-            return []
-        full_text = " ".join([str(t) for t in texts if t])
-        words = re.findall(r'\b[a-z]{3,}\b', full_text.lower())
-        stop_words = set(stopwords.words('english'))
-        filtered_words = [word for word in words if word not in stop_words]
-        word_counts = Counter(filtered_words)
-        return [word for word, count in word_counts.most_common(n)]
-
-    top_words = get_top_words(df_filtered[selected_col + "_clean"].tolist())
-
-    # Create context for the AI
-    visualization_context = f"""
-    VISUALIZATION ANALYSIS CONTEXT:
-
-    ANALYSIS TYPE: {analysis_type.upper()} ANALYSIS
-    QUESTION BEING ANALYZED: {selected_col.replace('_', ' ').title()}
-
-    SENTIMENT ANALYSIS:
-    - Average sentiment score: {avg_sentiment:.3f}
-    - Sentiment distribution: {len([s for s in sentiments if s > 0.3])} positive, 
-      {len([s for s in sentiments if s < -0.3])} negative, 
-      {len([s for s in sentiments if -0.3 <= s <= 0.3])} neutral
-
-    EMOTION ANALYSIS:
-    - Primary emotion: {primary_emotion}
-    - Emotion distribution: {dict(emotion_counts)}
-
-    THEMATIC ANALYSIS:
-    - Key themes identified: {list(themes.keys()) if themes else 'None'}
-    - Top words per theme: { {theme: [word for word, count in words[:3]] for theme, words in themes.items()} if themes else 'None'}
-
-    WORD CLOUD INSIGHTS:
-    - Top 10 most frequent words: {top_words}
-
-    DATA CONTEXT:
-    - Sample size: {len(df_filtered)} responses
-    - Available demographics: Region, Country, Position, Institution Type
-    """
-
-    # Initialize chat session for visualization interpreter
-    if "viz_chat_history" not in st.session_state:
-        st.session_state.viz_chat_history = []
+    # Get current data context
+    data_context = get_data_context(df_filtered, selected_col)
 
     # Display chat history
-    for message in st.session_state.viz_chat_history:
+    for message in st.session_state[chat_history_key]:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
-    # Chat input
-    viz_prompt = st.chat_input("Ask about what these visualizations mean...")
+    # Quick question suggestions with UNIQUE keys
+    st.markdown("**💡 Try asking:**")
+    col1, col2, col3 = st.columns(3)
 
-    if viz_prompt:
+    quick_questions = [
+        "What's the overall sentiment?",
+        "Which emotions are most common?",
+        "How do responses vary by region?",
+        "What are the main themes?",
+        "Compare challenges vs opportunities",
+        "What actions should we take?"
+    ]
+
+    for i, question in enumerate(quick_questions):
+        col = [col1, col2, col3][i % 3]
+        with col:
+            # Create UNIQUE key using tab_name and question index
+            unique_key = f"quick_q_{tab_name}_{i}_{hashlib.md5(question.encode()).hexdigest()[:8]}"
+            if st.button(question, key=unique_key, use_container_width=True):
+                st.session_state[chat_history_key].append({"role": "user", "content": question})
+                with st.chat_message("user"):
+                    st.markdown(question)
+
+                # Generate response
+                analysis = analyze_user_question(question, data_context)
+                response = generate_dynamic_response(question, data_context, analysis, themes)
+
+                with st.chat_message("assistant"):
+                    st.markdown(response)
+                st.session_state[chat_history_key].append({"role": "assistant", "content": response})
+                st.rerun()
+
+    # Chat input with unique key
+    chat_input_key = f"chat_input_{tab_name}"
+    user_question = st.chat_input("Or ask your own question about the data...", key=chat_input_key)
+
+    if user_question:
         # Add user message to history
-        st.session_state.viz_chat_history.append({"role": "user", "content": viz_prompt})
+        st.session_state[chat_history_key].append({"role": "user", "content": user_question})
 
         # Display user message
         with st.chat_message("user"):
-            st.markdown(viz_prompt)
+            st.markdown(user_question)
 
-        # Generate AI response
+        # Generate and display AI response
         with st.chat_message("assistant"):
-            system_prompt = f"""
-            You are a data visualization interpreter specializing in survey analysis. 
+            with st.spinner("Analyzing your data..."):
+                # Analyze the question
+                analysis = analyze_user_question(user_question, data_context)
 
-            {visualization_context}
+                # Generate data-driven response
+                response = generate_dynamic_response(user_question, data_context, analysis, themes)
 
-            GUIDELINES:
-            1. Interpret the visualizations in simple, clear language
-            2. Explain what the sentiment scores and emotion distributions mean
-            3. Connect the thematic analysis to practical implications
-            4. Highlight surprising or important patterns
-            5. Suggest what actions might be taken based on these insights
-            6. Be concise but informative (2-3 paragraphs maximum)
-            7. Reference specific numbers and patterns from the data
-            8. Explain why certain emotions or sentiments might be dominant
+                st.markdown(response)
 
-            User's question: {viz_prompt}
+        # Add to chat history
+        st.session_state[chat_history_key].append({"role": "assistant", "content": response})
+        st.rerun()
 
-            Provide a helpful interpretation:
-            """
-
-            try:
-                # Use the existing model instance
-                response = model.generate_content(system_prompt)
-
-                full_response = response.text
-                st.markdown(full_response)
-                st.session_state.viz_chat_history.append({"role": "assistant", "content": full_response})
-
-            except Exception as e:
-                error_msg = f"Error generating interpretation: {str(e)}"
-                st.error(error_msg)
-                st.session_state.viz_chat_history.append({"role": "assistant", "content": error_msg})
-
-    # Add example questions
-    with st.expander("💡 Example questions to ask"):
-        st.markdown("""
-        **General Interpretation Questions:**
-        - What do these sentiment results tell us?
-        - Why is [emotion] the dominant emotion here?
-        - What practical implications can we draw from these themes?
-        - Are there any surprising patterns in this data?
-        - How should we act on these insights?
-
-        **Specific Analysis Questions:**
-        - Explain the sentiment distribution pattern
-        - What do the most frequent words indicate about priorities?
-        - How do the emotions relate to the sentiment scores?
-        - What do the thematic clusters suggest about respondent concerns?
-        - Are there any contradictions between sentiment and emotions?
-        """)
-
-    # Clear chat button
-    col1, col2 = st.columns([1, 5])
-    with col1:
-        if st.button("🔄 Reset Chat", key="reset_viz_chat"):
-            st.session_state.viz_chat_history = []
-            st.rerun()
-
-
-# --------------------------
-# 🤖 COMPARATIVE ANALYSIS INTERPRETER (NEW)
-# --------------------------
-def create_comparative_interpreter(df_filtered, comparison_config):
-    """Chatbot specifically for interpreting comparative analysis"""
-
-    st.markdown("---")
-    st.markdown('<h2 class="section-header">🤖 Comparative Analysis Interpreter</h2>', unsafe_allow_html=True)
-
-    # Extract comparison metrics
-    col1, col2 = comparison_config.get('columns', ['AI_Challenges', 'AI_Opportunities'])
-    demographic = comparison_config.get('demographic', 'Region')
-    metric = comparison_config.get('metric', 'Sentiment')
-
-    # Create comparative context
-    comparative_context = f"""
-    COMPARATIVE ANALYSIS CONTEXT:
-
-    COMPARISON TYPE: {metric.upper()} COMPARISON
-    COMPARING: {col1.replace('_', ' ')} vs {col2.replace('_', ' ')}
-    BY: {demographic}
-
-    DATA SUMMARY:
-    - Total responses: {len(df_filtered)}
-    - Demographic groups: {df_filtered[demographic].nunique()}
-    - Available for comparison: {df_filtered[demographic].dropna().unique().tolist()}
-    """
-
-    # Initialize comparative chat history
-    if "comp_chat_history" not in st.session_state:
-        st.session_state.comp_chat_history = []
-
-    # Display chat history
-    for message in st.session_state.comp_chat_history:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
-
-    # Chat input
-    comp_prompt = st.chat_input("Ask about the comparative analysis...")
-
-    if comp_prompt:
-        # Add user message to history
-        st.session_state.comp_chat_history.append({"role": "user", "content": comp_prompt})
-
-        # Display user message
-        with st.chat_message("user"):
-            st.markdown(comp_prompt)
-
-        # Generate AI response
-        with st.chat_message("assistant"):
-            system_prompt = f"""
-            You are a comparative analysis interpreter specializing in survey data comparisons.
-
-            {comparative_context}
-
-            GUIDELINES:
-            1. Explain differences and similarities between the compared items
-            2. Highlight which demographic groups show the most variation
-            3. Suggest reasons for observed patterns
-            4. Connect comparative findings to practical implications
-            5. Point out any unexpected or noteworthy comparisons
-
-            User's question: {comp_prompt}
-
-            Provide a helpful comparative interpretation:
-            """
-
-            try:
-                response = model.generate_content(system_prompt)
-                full_response = response.text
-                st.markdown(full_response)
-                st.session_state.comp_chat_history.append({"role": "assistant", "content": full_response})
-
-            except Exception as e:
-                error_msg = f"Error generating interpretation: {str(e)}"
-                st.error(error_msg)
-                st.session_state.comp_chat_history.append({"role": "assistant", "content": error_msg})
-
-    # Add example questions
-    with st.expander("💡 Comparative analysis questions"):
-        st.markdown("""
-        **Comparison Questions:**
-        - Which group shows the most positive sentiment about AI opportunities?
-        - How do challenges differ by institution type?
-        - What are the key differences between regions?
-        - Which demographic has the most concerns about AI?
-        - How do emotions vary across different positions?
-        """)
-
-    # Clear chat button
-    if st.button("🔄 Reset Comparative Chat", key="reset_comp_chat"):
-        st.session_state.comp_chat_history = []
+    # Chat controls with unique key
+    clear_key = f"clear_chat_{tab_name}"
+    if st.button("🔄 Clear Chat History", key=clear_key, use_container_width=True):
+        st.session_state[chat_history_key] = []
         st.rerun()
 
 
 # --------------------------
-# 🤖 CHATBOT INTEGRATION (DYNAMIC DATA QUERYING)
+# 🎨 MAIN APPLICATION
 # --------------------------
-# Configure the Generative AI API with Streamlit secrets
-try:
-    genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
-except KeyError:
-    st.error("Please add your Google API key to the .streamlit/secrets.toml file.")
-    st.stop()
+st.markdown('<h1 class="main-header">🎓 AI & Digital Learning Insights Dashboard</h1>', unsafe_allow_html=True)
 
-# Set up the model
-model = genai.GenerativeModel('models/gemini-1.5-flash-latest')
+# Quick Start Guide
+with st.expander("🚀 **Quick Start Guide**", expanded=True):
+    col1, col2 = st.columns([2, 1])
 
+    with col1:
+        st.markdown("""
+        **1. 📁 Upload Data** → Use the sidebar to upload your Excel file  
+        **2. 📊 Explore Overview** → See dataset statistics and sample data  
+        **3. 🔍 Analyze Questions** → Dive deep into each survey question  
+        **4. 📈 Compare Groups** → See differences by demographics  
+        **5. 💬 Chat with Data** → Ask natural language questions  
+        """)
 
-# NEW FUNCTION: Dynamic data querying for specific questions
-def query_survey_data(df, question):
-    """Dynamically query the survey data based on the user's question"""
-    if df is None or len(df) == 0:
-        return "No data available to query."
+    with col2:
+        st.info("""
+        **Pro Tips:**
+        - Start with Question Analysis
+        - Use filters to focus on specific groups
+        - Hover over charts for details
+        - Ask the AI assistant for insights
+        """)
 
-    # Convert question to lowercase for easier matching
-    question_lower = question.lower()
-
-    # Initialize result dictionary
-    result = {
-        'question_type': 'general',
-        'data_found': False,
-        'summary': '',
-        'specific_data': {},
-        'sample_responses': []
-    }
-
-    try:
-        # Check for country-specific queries
-        countries = df['Country'].dropna().unique()
-        mentioned_country = None
-        for country in countries:
-            if country.lower() in question_lower:
-                mentioned_country = country
-                break
-
-        # Check for region-specific queries
-        regions = df['Region'].dropna().unique()
-        mentioned_region = None
-        for region in regions:
-            if region.lower() in question_lower:
-                mentioned_region = region
-                break
-
-        # Check for institution type queries
-        institution_types = df['Institution_Type'].dropna().unique()
-        mentioned_institution = None
-        for inst_type in institution_types:
-            if inst_type.lower() in question_lower:
-                mentioned_institution = inst_type
-                break
-
-        # Filter data based on mentioned criteria
-        filtered_df = df.copy()
-        if mentioned_country:
-            filtered_df = filtered_df[filtered_df['Country'] == mentioned_country]
-            result['specific_data']['country'] = mentioned_country
-        if mentioned_region:
-            filtered_df = filtered_df[filtered_df['Region'] == mentioned_region]
-            result['specific_data']['region'] = mentioned_region
-        if mentioned_institution:
-            filtered_df = filtered_df[filtered_df['Institution_Type'] == mentioned_institution]
-            result['specific_data']['institution_type'] = mentioned_institution
-
-        # Check what type of question this is
-        if any(keyword in question_lower for keyword in ['challenge', 'problem', 'issue', 'difficulty']):
-            result['question_type'] = 'challenges'
-            col = 'AI_Challenges'
-        elif any(keyword in question_lower for keyword in ['opportunity', 'benefit', 'advantage', 'positive']):
-            result['question_type'] = 'opportunities'
-            col = 'AI_Opportunities'
-        elif any(keyword in question_lower for keyword in ['enhance', 'improve', 'positive impact', 'benefit']):
-            result['question_type'] = 'enhancements'
-            col = 'Enhanced_Learning'
-        elif any(keyword in question_lower for keyword in ['negative', 'worse', 'problem', 'issue']):
-            result['question_type'] = 'negative_impacts'
-            col = 'Negative_Impact'
-        else:
-            result['question_type'] = 'objectives'
-            col = 'Objectives'
-
-        # Get relevant data
-        relevant_data = filtered_df[col].dropna()
-        if len(relevant_data) > 0:
-            result['data_found'] = True
-            result['response_count'] = len(relevant_data)
-
-            # Get sentiment analysis
-            sentiment_col = col + '_sentiment'
-            if sentiment_col in filtered_df.columns:
-                avg_sentiment = filtered_df[sentiment_col].mean()
-                result['specific_data']['avg_sentiment'] = round(avg_sentiment, 3)
-
-            # Get emotion analysis
-            emotion_col = col + '_emotion'
-            if emotion_col in filtered_df.columns:
-                emotion_counts = filtered_df[emotion_col].value_counts().to_dict()
-                result['specific_data']['emotions'] = emotion_counts
-
-            # Get sample responses (first 3 non-empty ones)
-            sample_responses = relevant_data.head(3).tolist()
-            result['sample_responses'] = sample_responses
-
-            # Extract common themes from responses
-            if len(relevant_data) > 0:
-                themes = extract_meaningful_topics(relevant_data.tolist(), num_topics=3, num_keywords=5)
-                result['specific_data']['themes'] = themes
-
-            # Create summary
-            location_info = ""
-            if mentioned_country:
-                location_info = f" in {mentioned_country}"
-            elif mentioned_region:
-                location_info = f" in the {mentioned_region} region"
-
-            result[
-                'summary'] = f"Found {len(relevant_data)} responses about {col.replace('_', ' ').lower()}{location_info}."
-
-    except Exception as e:
-        result['summary'] = f"Error querying data: {str(e)}"
-
-    return result
-
-
-# NEW FUNCTION: Enhanced chatbot response with dynamic data querying
-def get_dynamic_chatbot_response(prompt, df, chat_session):
-    """Get chatbot response with dynamic data querying capabilities"""
-
-    if df is None:
-        return "Please upload a survey data file first to ask questions about the data."
-
-    # First, query the data dynamically based on the question
-    query_result = query_survey_data(df, prompt)
-
-    # Create enhanced context based on the query results
-    if query_result['data_found']:
-        data_context = f"""
-        DYNAMIC DATA QUERY RESULTS:
-
-        QUESTION ANALYSIS:
-        - Question type: {query_result['question_type']}
-        - Responses found: {query_result['response_count']}
-        - Summary: {query_result['summary']}
-
-        SPECIFIC DATA:
-        {json.dumps(query_result['specific_data'], indent=2)}
-
-        SAMPLE RESPONSES:
-        {json.dumps(query_result['sample_responses'], indent=2)}
-
-        FULL DATASET CONTEXT:
-        - Total responses: {len(df)}
-        - Countries: {df['Country'].nunique()}
-        - Regions: {df['Region'].nunique()}
-        - Institution types: {df['Institution_Type'].nunique()}
-        """
-    else:
-        data_context = f"""
-        DATA CONTEXT:
-        - No specific data found matching your query criteria
-        - Available in dataset: {len(df)} total responses
-        - Countries: {list(df['Country'].dropna().unique())[:5]}... 
-        - Regions: {list(df['Region'].dropna().unique())}
-        - Try asking about: AI challenges, opportunities, enhanced learning, negative impacts, or objectives
-
-        GENERAL DATASET INFO:
-        {json.dumps({
-            'total_responses': len(df),
-            'available_countries': list(df['Country'].dropna().unique()),
-            'available_regions': list(df['Region'].dropna().unique()),
-            'available_institution_types': list(df['Institution_Type'].dropna().unique())
-        }, indent=2)}
-        """
-
-    # Enhanced system prompt
-    system_prompt = f"""
-    You are an AI assistant analyzing survey data about AI and digital learning in higher education.
-
-    {data_context}
-
-    GUIDELINES FOR RESPONSE:
-    1. BASE YOUR ANSWER STRICTLY ON THE DATA PROVIDED ABOVE
-    2. If specific data was found, reference the exact numbers and samples
-    3. If no specific data was found, suggest alternative questions based on available data
-    4. Mention sentiment and emotion trends when relevant
-    5. Quote specific sample responses when they illustrate important points
-    6. Be concise but informative
-    7. If the user asks about a country/region/institution not in the data, politely inform them
-
-    Current user question: {prompt}
-
-    Provide a helpful response based exclusively on the data above:
-    """
-
-    try:
-        response = chat_session.send_message(system_prompt, stream=True)
-        return response
-    except Exception as e:
-        return f"Error generating response: {str(e)}"
-
-
-# --------------------------
-# 🎨 STREAMLIT APP STARTS HERE
-# --------------------------
-st.markdown('<h1 class="main-header">🎓 Interactive Text Analysis: Generative AI in Higher Education</h1>',
-            unsafe_allow_html=True)
-
-# Add the summary paragraph here
-st.markdown("""
-<div class="highlight">
-<p>
-This application is designed to simplify understanding survey data about AI and digital learning. It automatically reads key details from an Excel file, such as the respondent's <b>job title</b>, <b>type of school</b>, and <b>location</b>. Its core function is to analyze open-ended text answers about topics like <b>AI challenges</b> and <b>opportunities</b>, as well as the <b>positive</b> and <b>negative impacts</b> of technology on education. Instead of just showing raw data, it presents these insights through visual reports that are easy for anyone to understand. For instance, a <b>word cloud</b> highlights the most talked-about concepts by making the words bigger, while <b>sentiment</b> and <b>emotion charts</b> provide a quick look at the general mood and feelings behind the responses. To help you spot trends, the app also includes <b>comparative charts</b> that let you see side-by-side differences, for example, comparing the overall mood towards "AI challenges" versus "AI opportunities." All of these tools work together to help you quickly uncover the main ideas and feelings expressed in the survey, without needing a data science background.
-</p>
-</div>
-""", unsafe_allow_html=True)
-
-# Initialize session state for data
+# Initialize session state
 if 'df' not in st.session_state:
     st.session_state.df = None
 if 'df_filtered' not in st.session_state:
     st.session_state.df_filtered = None
-if 'text_cols' not in st.session_state:
-    st.session_state.text_cols = None
 
-df = None
-text_cols = None
-uploaded_file = None
+# --- SIDEBAR ---
+with st.sidebar:
+    st.markdown("## 📁 Data Management")
 
-# --- SIDEBAR NAVIGATION AND FILE UPLOADER ---
-with st.sidebar.expander("📁 Upload Data", expanded=True):
-    uploaded_file = st.file_uploader(
-        "Upload your Excel survey file",
-        type=["xlsx"],
-        help="Please upload the survey data in Excel format with the required columns"
-    )
+    with st.expander("Upload Data", expanded=True):
+        uploaded_file = st.file_uploader("Choose Excel file", type=["xlsx"],
+                                         help="Upload survey data in Excel format")
 
-    if uploaded_file:
-        try:
-            df, text_cols = load_data(uploaded_file)
-            if df is not None and validate_dataframe(df):
-                st.success("✅ File successfully loaded and validated!")
-                # Store data in session state for chatbot access
-                st.session_state.df = df
-                st.session_state.df_filtered = df.copy()
-                st.session_state.text_cols = text_cols
-            else:
-                st.error("❌ File validation failed. Please check the format.")
-                df = None
-        except Exception as e:
-            st.error(f"❌ Error loading file: {str(e)}")
-            df = None
-    else:
-        st.info("""
-        **Expected Data Format:**
-        - Region
-        - Country
-        - Position of the respondent...
-        - Which category best describes...
-        - Which are the key objectives...
-        - Enhanced learning experience...
-        - Negative learning impact...
-        - AI challenges...
-        - AI opportunities...
-        """)
+        if uploaded_file:
+            with st.spinner('Loading and analyzing data...'):
+                df, text_cols = load_data(uploaded_file)
+                if df is not None and validate_dataframe(df):
+                    st.session_state.df = df
+                    st.session_state.df_filtered = df.copy()
+                    st.success("✅ Data loaded successfully!")
 
-# Use session state data for the rest of the app
+                    # Show quick stats
+                    st.info(f"""
+                    **Data Loaded:**
+                    - {len(df)} total responses
+                    - {df['Country'].nunique()} countries
+                    - {df['Region'].nunique()} regions
+                    - {df['Institution_Type'].nunique()} institution types
+                    """)
+                else:
+                    st.error("❌ Invalid file format")
+
+    if st.session_state.df is not None:
+        with st.expander("🔍 Filters", expanded=True):
+            df = st.session_state.df
+            region_filter = st.multiselect("Region", options=df["Region"].dropna().unique())
+            country_filter = st.multiselect("Country", options=df["Country"].dropna().unique())
+            institution_filter = st.multiselect("Institution Type", options=df["Institution_Type"].dropna().unique())
+
+            # Apply filters
+            df_filtered = df.copy()
+            if region_filter:
+                df_filtered = df_filtered[df_filtered["Region"].isin(region_filter)]
+            if country_filter:
+                df_filtered = df_filtered[df_filtered["Country"].isin(country_filter)]
+            if institution_filter:
+                df_filtered = df_filtered[df_filtered["Institution_Type"].isin(institution_filter)]
+
+            st.session_state.df_filtered = df_filtered
+            st.info(f"📊 Showing {len(df_filtered)} of {len(df)} responses")
+
+# --- MAIN CONTENT ---
 if st.session_state.df is not None:
     df = st.session_state.df
     df_filtered = st.session_state.df_filtered
-    text_cols = st.session_state.text_cols
 
-    # --- FILTERING SECTION ---
-    with st.sidebar.expander("🔍 Filters", expanded=True):
-        st.markdown("### Filter Responses")
-        region_filter = st.multiselect(
-            "Region", options=df["Region"].dropna().unique(), help="Filter by geographic region"
-        )
-        country_filter = st.multiselect(
-            "Country", options=df["Country"].dropna().unique(), help="Filter by country"
-        )
-        institution_filter = st.multiselect(
-            "Institution Type", options=df["Institution_Type"].dropna().unique(), help="Filter by type of institution"
-        )
-        position_filter = st.multiselect(
-            "Position", options=df["Position"].dropna().unique(), help="Filter by respondent's position"
-        )
+    # Tab interface
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(
+        ["📊 Overview", "🔍 Question Analysis", "📈 Comparisons", "📋 Data Explorer", "💬 AI Assistant"])
 
-    # Apply filters
-    df_filtered = df.copy()
-    if region_filter:
-        df_filtered = df_filtered[df_filtered["Region"].isin(region_filter)]
-    if country_filter:
-        df_filtered = df_filtered[df_filtered["Country"].isin(country_filter)]
-    if position_filter:
-        df_filtered = df_filtered[df_filtered["Position"].isin(position_filter)]
-    if institution_filter:
-        df_filtered = df_filtered[df_filtered["Institution_Type"].isin(institution_filter)]
-
-    # Update session state with filtered data
-    st.session_state.df_filtered = df_filtered
-
-    st.sidebar.markdown(f"**Filtered Responses:** {len(df_filtered)} of {len(df)}")
-
-    # --- TABBED INTERFACE FOR ANALYSIS SECTIONS ---
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
-        "📊 Overview",
-        "🔍 Question Analysis",
-        "📈 Comparative Analysis",
-        "📋 Data Explorer",
-        "💬 AI Chatbot"
-    ])
-
-    # --- TAB 1: OVERVIEW ---
     with tab1:
         st.markdown('<h2 class="section-header">📊 Dataset Overview</h2>', unsafe_allow_html=True)
-        metrics_col1, metrics_col2, metrics_col3, metrics_col4 = st.columns(4)
-        with metrics_col1:
-            st.metric("Total Responses", len(df), help="Total number of survey responses")
-        with metrics_col2:
-            st.metric("Regions", df["Region"].nunique(), help="Number of unique regions represented")
-        with metrics_col3:
-            st.metric("Countries", df["Country"].nunique(), help="Number of unique countries represented")
-        with metrics_col4:
-            st.metric("Institution Types", df["Institution_Type"].nunique(),
-                      help="Number of different institution types")
 
-        st.markdown("---")
-        st.markdown('<h3 class="section-header">💡 Quick Insights</h3>', unsafe_allow_html=True)
-        col1, col2 = st.columns(2)
-        with col1:
-            most_common_region = df["Region"].mode()[0] if not df["Region"].mode().empty else "N/A"
-            st.info(f"**Most common region:** {most_common_region}")
-            avg_sentiment = df["Objectives_sentiment"].mean()
-            sentiment_label = "Positive" if avg_sentiment > 0.3 else ("Negative" if avg_sentiment < -0.3 else "Neutral")
-            st.info(f"**Overall sentiment:** {sentiment_label} ({avg_sentiment:.2f})")
-        with col2:
-            most_common_inst = df["Institution_Type"].mode()[0] if not df["Institution_Type"].mode().empty else "N/A"
-            st.info(f"**Most common institution type:** {most_common_inst}")
-            complete_responses = df.dropna().shape[0]
-            completeness = (complete_responses / len(df)) * 100
-            st.info(f"**Complete responses:** {completeness:.1f}%")
+        # Key metrics
+        m1, m2, m3, m4 = st.columns(4)
+        with m1:
+            st.metric("Total Responses", len(df), help="Number of survey responses")
+        with m2:
+            st.metric("Countries", df["Country"].nunique(), "Unique countries")
+        with m3:
+            st.metric("Institution Types", df["Institution_Type"].nunique(), "Different types")
+        with m4:
+            complete = df.dropna().shape[0]
+            st.metric("Complete Data", f"{(complete / len(df) * 100):.1f}%", "Response completeness")
 
-        # Display sample data
-        st.markdown("---")
-        st.markdown('<h3 class="section-header">📋 Sample Data</h3>', unsafe_allow_html=True)
-        st.dataframe(df.head(10), use_container_width=True)
+        # Sample data
+        with st.expander("📋 View Sample Data", expanded=True):
+            st.dataframe(df.head(8), use_container_width=True)
 
-    # --- TAB 2: QUESTION ANALYSIS ---
     with tab2:
         st.markdown('<h2 class="section-header">🔍 Question Analysis</h2>', unsafe_allow_html=True)
+
         question_map = {
-            "Key Objectives (Digital Innovation)": "Objectives",
-            "Enhanced Learning Experience": "Enhanced_Learning",
-            "Negative Learning Impact": "Negative_Impact",
             "AI Challenges": "AI_Challenges",
-            "AI Opportunities": "AI_Opportunities"
+            "AI Opportunities": "AI_Opportunities",
+            "Enhanced Learning": "Enhanced_Learning",
+            "Key Objectives": "Objectives",
+            "Negative Impact": "Negative_Impact"
         }
-        selected_label = st.selectbox(
-            "Choose a question to analyze", list(question_map.keys()),
-            help="Select a survey question to explore in detail"
-        )
+
+        selected_label = st.selectbox("Choose question to analyze:", list(question_map.keys()))
         selected_col = question_map[selected_label]
-        selected_col_clean = selected_col + "_clean"
-        selected_col_sentiment = selected_col + "_sentiment"
-        selected_col_emotion = selected_col + "_emotion"
-        responses = df_filtered[selected_col_clean].tolist()
-        sentiments = df_filtered[selected_col_sentiment].tolist()
-        emotions = df_filtered[selected_col_emotion].tolist()
+        responses = df_filtered[selected_col + "_clean"].tolist()
 
-        # Call the corrected word cloud function
+        # Word analysis
         st.markdown("---")
-        st.markdown('<h2 class="section-header">☁️ Word Cloud</h2>', unsafe_allow_html=True)
-        interactive_word_cloud(responses, f"Most Frequent Words: {selected_label}")
+        interactive_word_cloud(responses, f"Analysis: {selected_label}")
 
+        # Sentiment analysis
         st.markdown("---")
-        st.markdown('<h2 class="section-header">😊 Sentiment Analysis</h2>', unsafe_allow_html=True)
-        sentiment_chart = create_enhanced_sentiment_visualization(sentiments,
-                                                                  f"Sentiment Distribution: {selected_label}")
-        if sentiment_chart:
-            st.plotly_chart(sentiment_chart, use_container_width=True)
-            st.metric("Average Sentiment Score", f"{np.mean(sentiments):.3f}",
-                      help="Average sentiment score across all responses (-1 to +1 scale)")
-        else:
-            st.warning("No sentiment data available.")
+        st.markdown('<h3 class="section-header">😊 Sentiment Analysis</h3>', unsafe_allow_html=True)
+        sentiments = df_filtered[selected_col + "_sentiment"].tolist()
 
-        st.markdown("---")
-        st.markdown('<h2 class="section-header">😢 Emotion Analysis</h2>', unsafe_allow_html=True)
-        emotion_chart = create_enhanced_emotion_visualization(emotions, f"Emotion Distribution: {selected_label}")
-        if emotion_chart:
-            st.plotly_chart(emotion_chart, use_container_width=True)
-        else:
-            st.warning("No emotion data available.")
+        if sentiments:
+            gauge_fig, hist_fig = create_enhanced_sentiment_visualization(sentiments, "Sentiment Distribution")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.plotly_chart(gauge_fig, use_container_width=True)
+            with col2:
+                st.plotly_chart(hist_fig, use_container_width=True)
 
+            st.metric("Average Sentiment", f"{np.mean(sentiments):.3f}",
+                      delta=f"{np.mean(sentiments):.3f} from neutral" if np.mean(sentiments) != 0 else "Neutral")
+
+        # Emotion analysis
         st.markdown("---")
-        st.markdown('<h2 class="section-header">🧠 Thematic Analysis</h2>', unsafe_allow_html=True)
-        themes = extract_meaningful_topics(responses, num_topics=5, num_keywords=5)
+        st.markdown('<h3 class="section-header">😢 Emotion Analysis</h3>', unsafe_allow_html=True)
+        emotions = df_filtered[selected_col + "_emotion"].tolist()
+        if emotions:
+            emotion_fig = create_enhanced_emotion_visualization(emotions, "Emotion Distribution")
+            st.plotly_chart(emotion_fig, use_container_width=True)
+
+        # Thematic analysis
+        st.markdown("---")
+        st.markdown('<h3 class="section-header">🧠 Thematic Analysis</h3>', unsafe_allow_html=True)
+        themes = extract_meaningful_topics(responses)
         if themes:
             for theme, words in themes.items():
                 word_list = ", ".join([f"{word} ({count})" for word, count in words[:5]])
-                st.markdown(f"**{theme}**: {word_list}")
-            topic_data = []
-            for theme, words in themes.items():
-                for word, count in words:
-                    topic_data.append({"Theme": theme, "Word": word, "Frequency": count})
-            topic_df = pd.DataFrame(topic_data)
-            fig_topics = px.bar(topic_df, x="Frequency", y="Word", color="Theme", orientation='h',
-                                title="Theme Keywords and Frequencies",
-                                color_discrete_sequence=px.colors.qualitative.Set3)
-            st.plotly_chart(fig_topics, use_container_width=True)
-        else:
-            st.warning("Not enough text data to perform thematic analysis.")
+                st.info(f"**{theme}**: {word_list}")
 
+        # Insights summary
         generate_insights_summary(df_filtered, selected_col)
 
-        # ADD THE NEW VISUALIZATION INTERPRETER CHATBOT HERE
-        create_visualization_interpreter(df_filtered, selected_col, sentiment_chart, emotion_chart, themes, "question")
+        # Dynamic AI chat with UNIQUE tab identifier
+        create_dynamic_ai_chat(df_filtered, selected_col, themes, "question_analysis")
 
-        add_visualization_help()
-
-    # --- TAB 3: COMPARATIVE ANALYSIS ---
     with tab3:
-        st.markdown('<h2 class="section-header">📈 Interactive Comparative Analysis</h2>', unsafe_allow_html=True)
-        st.info("""
-        **Comparative Analysis** allows you to compare responses across different demographic groups
-        or between different questions. Use the options below to explore patterns and differences.
-        """)
+        st.markdown('<h2 class="section-header">📈 Comparative Analysis</h2>', unsafe_allow_html=True)
 
-        col_demographic, col_metric = st.columns(2)
-        with col_demographic:
-            demographic_options = ["Region", "Country", "Position", "Institution_Type"]
-            selected_demographic = st.selectbox("Select a Demographic to Compare", demographic_options)
-        with col_metric:
-            metric_options = ["Sentiment", "Emotions", "Top Words"]
-            selected_metric = st.selectbox("Select a Metric to Analyze", metric_options)
+        col1, col2 = st.columns(2)
+        with col1:
+            demographic = st.selectbox("Compare by:", ["Region", "Country", "Institution_Type", "Position"],
+                                       key="demo_select")
+        with col2:
+            comparison = st.selectbox("Compare:",
+                                      ["AI Challenges vs Opportunities", "Enhanced Learning vs Negative Impact"],
+                                      key="comp_select")
 
-        if selected_metric in ["Sentiment", "Top Words"]:
-            st.markdown("---")
-            st.subheader("Select a Topic to Compare")
-            topic_pairs = {
-                "AI Challenges vs Opportunities": ("AI_Challenges", "AI_Opportunities"),
-                "Enhanced Learning vs Negative Impact": ("Enhanced_Learning", "Negative_Impact")
-            }
-            selected_topic_label = st.selectbox("Choose a topic pair", list(topic_pairs.keys()))
-            col1, col2 = topic_pairs[selected_topic_label]
+        if comparison == "AI Challenges vs Opportunities":
+            col1, col2 = "AI_Challenges", "AI_Opportunities"
+        else:
+            col1, col2 = "Enhanced_Learning", "Negative_Impact"
 
-            if selected_metric == "Sentiment":
-                # Create sentiment labels for the selected column
-                sentiment_col = col1 + "_sentiment"
-                df_sent = df_filtered.copy()
-                df_sent['Sentiment_Label'] = df_sent[sentiment_col].apply(
-                    lambda x: 'Positive' if x > 0.3 else ('Negative' if x < -0.3 else 'Neutral'))
+        # Comparative visualization
+        st.subheader("Sentiment Comparison")
+        fig = create_comparative_box_plot(df_filtered, col1, col2, f"Comparison: {col1} vs {col2}")
+        st.plotly_chart(fig, use_container_width=True)
 
-                st.markdown("### Overall Sentiment Comparison")
-                fig_box = create_comparative_box_plot(df_filtered, col1, col2,
-                                                      f"Sentiment of '{col1.replace('_', ' ')}' vs '{col2.replace('_', ' ')}'")
-                st.plotly_chart(fig_box, use_container_width=True)
+        # Sunburst chart
+        st.subheader(f"Breakdown by {demographic}")
+        sunburst_fig = create_comparative_sunburst(df_filtered, demographic, col1 + "_emotion")
+        st.plotly_chart(sunburst_fig, use_container_width=True)
 
-                st.markdown(f"### Sentiment Breakdown by {selected_demographic}")
-                fig_sent_sunburst = create_comparative_sunburst(df_sent, selected_demographic, 'Sentiment_Label')
-                st.plotly_chart(fig_sent_sunburst, use_container_width=True)
-
-            elif selected_metric == "Top Words":
-                st.markdown(f"### Top Words Comparison")
-                create_top_words_comparison(df_filtered, selected_demographic, col1)
-                create_top_words_comparison(df_filtered, selected_demographic, col2)
-
-        elif selected_metric == "Emotions":
-            st.markdown(f"### Emotion Breakdown by {selected_demographic}")
-            # Use the first available emotion column for demonstration
-            emotion_col = "AI_Challenges_emotion" if "AI_Challenges_emotion" in df_filtered.columns else "Objectives_emotion"
-            fig_emotion_sunburst = create_comparative_sunburst(df_filtered, selected_demographic, emotion_col)
-            st.plotly_chart(fig_emotion_sunburst, use_container_width=True)
-
-        # ADD THE COMPARATIVE INTERPRETER CHATBOT HERE
-        comparison_config = {
-            'columns': [col1, col2] if 'col1' in locals() and 'col2' in locals() else ['AI_Challenges',
-                                                                                       'AI_Opportunities'],
-            'demographic': selected_demographic,
-            'metric': selected_metric
-        }
-        create_comparative_interpreter(df_filtered, comparison_config)
-
-    # --- TAB 4: DATA EXPLORER ---
     with tab4:
         st.markdown('<h2 class="section-header">📋 Data Explorer</h2>', unsafe_allow_html=True)
-        st.dataframe(df, use_container_width=True, height=400, hide_index=True)
+
+        st.dataframe(df, use_container_width=True, height=400)
 
         st.markdown("---")
-        st.markdown("### 📝 Data Summary")
-        st.json({
-            "Total Records": len(df),
-            "Columns": list(df.columns),
-            "Data Types": {col: str(dtype) for col, dtype in df.dtypes.items()}
-        })
+        st.subheader("Data Summary")
+        col1, col2 = st.columns(2)
 
-        st.markdown("---")
-        st.markdown("### 🔍 Column Explorer")
-        selected_column = st.selectbox("Select a column to explore", df.columns)
-        if selected_column:
-            st.write(f"**Unique values in {selected_column}:**")
-            st.write(df[selected_column].value_counts())
-
-    # --- TAB 5: AI Chatbot (DYNAMIC DATA QUERYING) ---
-    with tab5:
-        st.markdown('<h2 class="section-header">💬 Ask the AI Chatbot about the Data</h2>', unsafe_allow_html=True)
-        st.info(
-            "Ask me specific questions like: 'What were the main challenges identified with AI in Sweden?' or 'How do universities feel about AI opportunities?'")
-
-        # Initialize chat history in session state
-        if "chat_history" not in st.session_state:
-            st.session_state.chat_history = []
-
-        # Initialize Gemini chat session in session state
-        if "gemini_chat" not in st.session_state:
-            st.session_state.gemini_chat = model.start_chat(history=[])
-
-        # Display data status
-        if df is not None:
-            st.success(f"✅ Chatbot has access to {len(df)} survey responses from {df['Country'].nunique()} countries")
-            st.info(
-                f"📊 Available countries: {', '.join(list(df['Country'].dropna().unique())[:5])}{'...' if len(df['Country'].dropna().unique()) > 5 else ''}")
-        else:
-            st.warning("⚠️ Please upload a data file first to enable chatbot functionality")
-
-        # Display chat messages from history
-        for message in st.session_state.chat_history:
-            with st.chat_message(message["role"]):
-                st.markdown(message["content"])
-
-        # Accept user input
-        if prompt := st.chat_input("What would you like to know about the survey data?"):
-            # Add user message to chat history
-            st.session_state.chat_history.append({"role": "user", "content": prompt})
-
-            # Display user message immediately
-            with st.chat_message("user"):
-                st.markdown(prompt)
-
-            # Get response from the LLM
-            with st.chat_message("assistant"):
-                try:
-                    response_placeholder = st.empty()
-                    full_response = ""
-
-                    # Use dynamic chatbot function with data querying
-                    response = get_dynamic_chatbot_response(prompt, df, st.session_state.gemini_chat)
-
-                    if hasattr(response, '__iter__'):
-                        # Streaming response
-                        for chunk in response:
-                            full_response += chunk.text
-                            response_placeholder.markdown(full_response + "▌")
-                            time.sleep(0.01)
-                    else:
-                        # Direct response (error message)
-                        full_response = response
-
-                    # Display final response
-                    response_placeholder.markdown(full_response)
-
-                    # Add assistant response to chat history
-                    st.session_state.chat_history.append({"role": "assistant", "content": full_response})
-
-                except Exception as e:
-                    error_msg = f"Sorry, I encountered an error: {str(e)}"
-                    st.error(error_msg)
-                    st.session_state.chat_history.append({"role": "assistant", "content": error_msg})
-
-        # Add a clear chat button to reset the conversation
-        col1, col2 = st.columns([1, 4])
         with col1:
-            if st.button("🗑️ Clear Chat History"):
-                st.session_state.chat_history = []
-                st.session_state.gemini_chat = model.start_chat(history=[])
-                st.rerun()
+            st.json({
+                "Total Records": len(df),
+                "Columns": list(df.columns),
+                "Data Types": {col: str(dtype) for col, dtype in df.dtypes.items()}
+            })
 
         with col2:
-            if st.button("🔍 Test Data Query"):
-                if df is not None:
-                    test_question = "What are the main AI challenges in Sweden?"
-                    query_result = query_survey_data(df, test_question)
-                    st.json(query_result)
+            selected_column = st.selectbox("Explore column:", df.columns, key="col_explorer")
+            if selected_column:
+                st.write(f"**Unique values in {selected_column}:**")
+                value_counts = df[selected_column].value_counts()
+                st.dataframe(value_counts, use_container_width=True)
 
-    st.sidebar.markdown("---")
-    st.sidebar.download_button(
-        label="📥 Download Filtered Data as CSV",
-        data=df_filtered.to_csv(index=False).encode('utf-8'),
-        file_name="filtered_survey_data.csv",
-        mime="text/csv"
-    )
+    with tab5:
+        st.markdown('<h2 class="section-header">💬 Dynamic AI Analysis Assistant</h2>', unsafe_allow_html=True)
 
-# --------------------------
-# 💡 FOOTER
-# --------------------------
+        if df is not None:
+            # Show data overview
+            st.success(f"✅ AI Assistant has access to {len(df)} survey responses")
+
+            # Data summary cards
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Total Responses", len(df))
+            with col2:
+                st.metric("Countries", df['Country'].nunique())
+            with col3:
+                st.metric("Regions", df['Region'].nunique())
+            with col4:
+                st.metric("Institution Types", df['Institution_Type'].nunique())
+
+            # Dynamic AI chat with UNIQUE tab identifier
+            create_dynamic_ai_chat(df_filtered, tab_name="main_assistant")
+
+        else:
+            st.warning("📁 Please upload a data file first to enable AI analysis")
+            st.info("Use the sidebar to upload your Excel survey data file")
+
+else:
+    # Welcome screen when no data loaded
+    st.markdown("""
+    <div class='highlight'>
+    <h3>👋 Welcome to the AI & Digital Learning Insights Dashboard!</h3>
+    <p>To get started, please upload your survey data using the panel on the left.</p>
+    <p><b>Expected data format:</b> Excel file with columns for Region, Country, Position, Institution Type, 
+    and survey questions about AI challenges, opportunities, and learning impacts.</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+# Footer
 st.markdown("---")
-st.caption("Built with ❤️ using Streamlit + VADER + Ekman Emotion Model + Gemini AI | For research purposes only")
+st.caption("Built with ❤️ using Streamlit | VADER Sentiment Analysis | Ekman Emotions | Interactive Visualizations")
+
+# Performance optimization
+st.markdown("""
+<style>
+    .stSpinner > div { text-align: center; }
+    .stButton > button { width: 100%; }
+    .stDataFrame { font-size: 0.9em; }
+</style>
+""", unsafe_allow_html=True)
