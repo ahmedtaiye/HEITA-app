@@ -2,10 +2,16 @@ import subprocess
 import sys
 import os
 import hashlib
+import re
+from collections import Counter
+import json
 
 
-# Attempt to install missing packages
+# --------------------------
+# 🎯 GROQ AI SETUP - FREE AND FAST AI API
+# --------------------------
 def install_package(package):
+    """Safely install Python packages"""
     try:
         subprocess.check_call([sys.executable, "-m", "pip", "install", package])
         return True
@@ -13,35 +19,55 @@ def install_package(package):
         return False
 
 
-# Check and install plotly if missing
-try:
-    import plotly.express as px
-    import plotly.graph_objects as go
-except ImportError:
-    print("Plotly not found. Installing...")
-    if install_package("plotly==5.15.0"):
-        import plotly.express as px
-        import plotly.graph_objects as go
+def setup_groq_ai():
+    """Safe Groq AI setup that won't crash the app"""
+    try:
+        import openai
+        GROQ_AI_AVAILABLE = True
+        print("✅ OpenAI library imported successfully for Groq")
+    except ImportError:
+        print("📦 OpenAI library not found. Installing...")
+        try:
+            if install_package("openai"):
+                import openai
+                GROQ_AI_AVAILABLE = True
+                print("✅ OpenAI library installed successfully for Groq")
+            else:
+                GROQ_AI_AVAILABLE = False
+                openai = None
+                print("❌ Failed to install OpenAI library")
+        except Exception as e:
+            GROQ_AI_AVAILABLE = False
+            openai = None
+            print(f"❌ Installation error: {e}")
 
-        print("Plotly installed successfully")
-    else:
-        print("Failed to install plotly")
+    return GROQ_AI_AVAILABLE, openai if 'openai' in locals() else None
+
+
+# Initialize Groq AI at module level
+GROQ_AI_AVAILABLE, openai = setup_groq_ai()
+
+# Install other required packages
+required_packages = ["plotly", "nltk", "wordcloud", "matplotlib", "pillow", "pandas", "numpy", "streamlit"]
+for package in required_packages:
+    try:
+        __import__(package)
+    except ImportError:
+        print(f"Installing {package}...")
+        install_package(package)
 
 # Now import other packages
 import streamlit as st
 import pandas as pd
-import re
-from collections import Counter
-import nltk
-from nltk.sentiment import SentimentIntensityAnalyzer
-from nltk.corpus import stopwords
 import numpy as np
+import plotly.express as px
+import plotly.graph_objects as go
 from wordcloud import WordCloud
 import matplotlib.pyplot as plt
 from PIL import Image
-import time
-import google.generativeai as genai
-import json
+import nltk
+from nltk.sentiment import SentimentIntensityAnalyzer
+from nltk.corpus import stopwords
 
 # --------------------------
 # ⚙️ STREAMLIT PAGE CONFIG MUST BE THE FIRST COMMAND
@@ -123,6 +149,134 @@ st.markdown("""
     }
 </style>
 """, unsafe_allow_html=True)
+
+
+# --------------------------
+# 🔧 UPDATED GROQ API FUNCTIONS
+# --------------------------
+def configure_groq_api():
+    """Safe API configuration that won't crash"""
+    if not GROQ_AI_AVAILABLE or openai is None:
+        return False, "OpenAI library not available for Groq"
+
+    api_key = None
+
+    # 1. Check session state first
+    if 'groq_api_key' in st.session_state and st.session_state.groq_api_key:
+        api_key = st.session_state.groq_api_key
+
+    # 2. Check Streamlit secrets
+    if not api_key:
+        try:
+            if hasattr(st, 'secrets') and 'GROQ_API_KEY' in st.secrets:
+                api_key = st.secrets['GROQ_API_KEY']
+        except:
+            pass
+
+    # 3. Check environment variable
+    if not api_key:
+        api_key = os.getenv("GROQ_API_KEY")
+
+    if api_key and api_key.strip():
+        try:
+            # Configure OpenAI client for Groq
+            client = openai.OpenAI(
+                api_key=api_key.strip(),
+                base_url="https://api.groq.com/openai/v1"
+            )
+            # Store client in session state for reuse
+            st.session_state.groq_client = client
+            return True, "✅ Groq API Active"
+        except Exception as e:
+            return False, f"❌ API Error: {str(e)[:50]}..."
+
+    return False, "🔑 No API key configured"
+
+
+def safe_groq_response(prompt, context=""):
+    """Generate AI response with Groq API and comprehensive error handling"""
+    if not GROQ_AI_AVAILABLE:
+        return "🤖 AI features currently unavailable. Please check OpenAI library installation."
+
+    # Check if API is configured
+    api_configured, status = configure_groq_api()
+    if not api_configured:
+        return f"🔧 {status}"
+
+    try:
+        # Get the configured client
+        client = st.session_state.get('groq_client')
+        if not client:
+            return "❌ Groq client not configured"
+
+        # Try different Groq models in order of preference
+        model_names = [
+            'llama-3.1-70b-versatile',  # Latest Llama model
+            'llama-3.1-8b-instant',  # Faster Llama model
+            'mixtral-8x7b-32768',  # Mixtral model
+            'gemma2-9b-it',  # Gemma model
+        ]
+
+        response_text = None
+        last_error = None
+
+        for model_name in model_names:
+            try:
+                full_prompt = f"""
+                You are a data analysis assistant for survey data. Please provide helpful, data-driven insights.
+
+                Data Context: {context}
+
+                User Question: {prompt}
+
+                Please provide a concise, informative response based on the available data.
+                """
+
+                response = client.chat.completions.create(
+                    model=model_name,
+                    messages=[
+                        {"role": "system",
+                         "content": "You are a helpful data analysis assistant specializing in survey data insights."},
+                        {"role": "user", "content": full_prompt}
+                    ],
+                    max_tokens=1000,
+                    temperature=0.7
+                )
+
+                if response.choices and response.choices[0].message.content:
+                    response_text = response.choices[0].message.content
+                    break  # Success, exit loop
+
+            except Exception as e:
+                last_error = e
+                continue  # Try next model
+
+        if response_text:
+            return response_text
+        else:
+            return f"❌ All models failed. Last error: {str(last_error)[:100]}..."
+
+    except Exception as e:
+        error_msg = str(e)
+
+        # Handle specific error types with user-friendly messages
+        if "invalid_api_key" in error_msg.lower() or "unauthorized" in error_msg.lower():
+            return "❌ Invalid API key. Please check your Groq API key in the sidebar."
+        elif "quota" in error_msg.lower() or "rate_limit" in error_msg.lower():
+            return """📊 **Rate limit reached**. Groq has generous free limits, but you may have exceeded them.
+
+**Solutions:**
+- Wait a few minutes and try again
+- Get a paid Groq account for higher limits
+- The free tier resets daily"""
+        elif "content_filter" in error_msg.lower():
+            return "🛡️ Content safety filters triggered. Please rephrase your question."
+        elif "404" in error_msg or "not found" in error_msg.lower():
+            return "🔄 Model not found. Trying different Groq models automatically..."
+        elif "503" in error_msg or "500" in error_msg:
+            return "🌐 Groq service temporarily unavailable. Please try again in a few moments."
+        else:
+            return f"⚠️ AI service temporarily unavailable. Error: {error_msg[:80]}..."
 
 
 # --------------------------
@@ -474,7 +628,7 @@ def create_comparative_sunburst(df, demographic_col, text_col):
 
 
 # --------------------------
-# 🤖 ENHANCED DYNAMIC AI CHAT SYSTEM
+# 🤖 ENHANCED DYNAMIC AI CHAT SYSTEM WITH GROQ - IMPROVED VERSION
 # --------------------------
 def get_data_context(df_filtered, selected_col=None):
     """Create comprehensive data context for AI responses"""
@@ -505,14 +659,15 @@ def get_data_context(df_filtered, selected_col=None):
             },
             'emotion_counts': pd.Series(emotions).value_counts().to_dict(),
             'sample_responses': responses[:3] if responses else [],
-            'total_words': len(' '.join(responses).split()) if responses else 0
+            'total_words': len(' '.join(responses).split()) if responses else 0,
+            'response_lengths': [len(str(r)) for r in responses if r]
         })
 
     return context
 
 
 def analyze_user_question(question, data_context):
-    """Analyze what the user is asking about"""
+    """Enhanced question analysis for more dynamic responses"""
     question_lower = question.lower()
 
     analysis = {
@@ -521,23 +676,40 @@ def analyze_user_question(question, data_context):
         'demographics': [],
         'needs_comparison': False,
         'needs_sentiment': False,
-        'needs_emotion': False
+        'needs_emotion': False,
+        'needs_trends': False,
+        'needs_recommendations': False,
+        'specific_question': question_lower
     }
 
-    # Detect question type
-    if any(word in question_lower for word in ['sentiment', 'feeling', 'mood', 'positive', 'negative']):
+    # Enhanced question type detection
+    sentiment_words = ['sentiment', 'feeling', 'mood', 'positive', 'negative', 'optimistic', 'pessimistic']
+    emotion_words = ['emotion', 'feeling', 'joy', 'anger', 'fear', 'sadness', 'disgust', 'surprise', 'emotional']
+    comparison_words = ['compare', 'difference', 'versus', 'vs', 'between', 'contrast', 'versus']
+    trend_words = ['trend', 'pattern', 'over time', 'evolution', 'change', 'development']
+    recommendation_words = ['recommend', 'suggest', 'advice', 'should we', 'what to do', 'action', 'solution']
+
+    if any(word in question_lower for word in sentiment_words):
         analysis['needs_sentiment'] = True
         analysis['question_type'] = 'sentiment'
 
-    if any(word in question_lower for word in ['emotion', 'feeling', 'joy', 'anger', 'fear', 'sadness']):
+    if any(word in question_lower for word in emotion_words):
         analysis['needs_emotion'] = True
         analysis['question_type'] = 'emotion'
 
-    if any(word in question_lower for word in ['compare', 'difference', 'versus', 'vs', 'between']):
+    if any(word in question_lower for word in comparison_words):
         analysis['needs_comparison'] = True
         analysis['question_type'] = 'comparison'
 
-    # Detect demographics mentioned
+    if any(word in question_lower for word in trend_words):
+        analysis['needs_trends'] = True
+        analysis['question_type'] = 'trends'
+
+    if any(word in question_lower for word in recommendation_words):
+        analysis['needs_recommendations'] = True
+        analysis['question_type'] = 'recommendations'
+
+    # Enhanced demographic detection
     for region in data_context.get('regions', []):
         if region and isinstance(region, str) and region.lower() in question_lower:
             analysis['demographics'].append(('region', region))
@@ -550,71 +722,157 @@ def analyze_user_question(question, data_context):
         if inst_type and isinstance(inst_type, str) and inst_type.lower() in question_lower:
             analysis['demographics'].append(('institution_type', inst_type))
 
+    # Detect specific topics
+    if 'ai' in question_lower or 'artificial intelligence' in question_lower:
+        analysis['topics'].append('AI')
+    if 'digital' in question_lower or 'technology' in question_lower:
+        analysis['topics'].append('Digital Technology')
+    if 'learning' in question_lower or 'education' in question_lower:
+        analysis['topics'].append('Learning')
+    if 'challenge' in question_lower:
+        analysis['topics'].append('Challenges')
+    if 'opportunity' in question_lower:
+        analysis['topics'].append('Opportunities')
+
     return analysis
 
 
 def generate_dynamic_response(question, data_context, analysis, themes=None):
-    """Generate a data-driven response based on the actual analysis"""
+    """Enhanced dynamic response generation with more specific insights"""
 
     response_parts = []
-    response_parts.append("**Based on my analysis of the survey data:**")
 
-    # Add sentiment information if relevant
+    # Add personalized greeting based on question type
+    if analysis['question_type'] == 'sentiment':
+        response_parts.append("**📊 Sentiment Analysis Results:**")
+    elif analysis['question_type'] == 'emotion':
+        response_parts.append("**🎭 Emotional Tone Analysis:**")
+    elif analysis['question_type'] == 'comparison':
+        response_parts.append("**⚖️ Comparative Insights:**")
+    elif analysis['question_type'] == 'recommendations':
+        response_parts.append("**💡 Actionable Recommendations:**")
+    else:
+        response_parts.append("**🔍 Data Analysis Insights:**")
+
+    # Enhanced sentiment analysis with more detail
     if analysis['needs_sentiment'] and 'avg_sentiment' in data_context:
         avg_sentiment = data_context['avg_sentiment']
-        sentiment_desc = "positive" if avg_sentiment > 0.3 else "negative" if avg_sentiment < -0.3 else "neutral"
-        response_parts.append(
-            f"📊 **Sentiment Analysis**: The overall sentiment is **{sentiment_desc}** (average score: {avg_sentiment:.3f}).")
+
+        # More nuanced sentiment descriptions
+        if avg_sentiment > 0.6:
+            sentiment_desc = "strongly positive"
+            emoji = "😊"
+        elif avg_sentiment > 0.3:
+            sentiment_desc = "moderately positive"
+            emoji = "🙂"
+        elif avg_sentiment > 0.1:
+            sentiment_desc = "slightly positive"
+            emoji = "😐"
+        elif avg_sentiment < -0.6:
+            sentiment_desc = "strongly negative"
+            emoji = "😠"
+        elif avg_sentiment < -0.3:
+            sentiment_desc = "moderately negative"
+            emoji = "😟"
+        elif avg_sentiment < -0.1:
+            sentiment_desc = "slightly negative"
+            emoji = "😕"
+        else:
+            sentiment_desc = "neutral"
+            emoji = "😐"
+
+        response_parts.append(f"{emoji} **Overall Sentiment**: {sentiment_desc.title()} (score: {avg_sentiment:.3f})")
 
         dist = data_context.get('sentiment_distribution', {})
         if dist:
-            response_parts.append(f"   • {dist.get('positive', 0)} positive responses")
-            response_parts.append(f"   • {dist.get('neutral', 0)} neutral responses")
-            response_parts.append(f"   • {dist.get('negative', 0)} negative responses")
+            total = sum(dist.values())
+            if total > 0:
+                response_parts.append(
+                    f"   • 📈 **{dist.get('positive', 0)}** positive responses ({dist.get('positive', 0) / total * 100:.1f}%)")
+                response_parts.append(
+                    f"   • 📊 **{dist.get('neutral', 0)}** neutral responses ({dist.get('neutral', 0) / total * 100:.1f}%)")
+                response_parts.append(
+                    f"   • 📉 **{dist.get('negative', 0)}** negative responses ({dist.get('negative', 0) / total * 100:.1f}%)")
 
-    # Add emotion information if relevant
+    # Enhanced emotion analysis
     if analysis['needs_emotion'] and 'emotion_counts' in data_context:
         emotion_counts = data_context['emotion_counts']
         if emotion_counts:
-            primary_emotion = max(emotion_counts.items(), key=lambda x: x[1]) if emotion_counts else (None, 0)
-            if primary_emotion[0]:
-                response_parts.append(
-                    f"🎭 **Emotion Analysis**: The dominant emotion is **{primary_emotion[0]}** ({primary_emotion[1]} responses).")
+            total_emotions = sum(emotion_counts.values())
+            emotion_texts = []
+            for emotion, count in sorted(emotion_counts.items(), key=lambda x: x[1], reverse=True):
+                percentage = (count / total_emotions) * 100
+                emotion_texts.append(f"**{emotion.title()}** ({count}, {percentage:.1f}%)")
 
-    # Add demographic insights
+            if emotion_texts:
+                response_parts.append(f"🎭 **Emotional Distribution**: {', '.join(emotion_texts[:3])}")
+
+    # Demographic-specific insights
     if analysis['demographics']:
         for demo_type, demo_value in analysis['demographics']:
             response_parts.append(
-                f"🌍 **Regional Insight**: Responses from **{demo_value}** show unique patterns worth exploring.")
+                f"🌍 **{demo_value} Focus**: Responses from this group show distinctive patterns in the data.")
 
-    # Add thematic insights
+    # Thematic insights with more context
     if themes and analysis['question_type'] != 'comparison':
-        theme_list = list(themes.keys())[:3]
+        theme_list = list(themes.keys())[:4]
         if theme_list:
-            response_parts.append(f"🧠 **Key Themes**: {', '.join(theme_list)}")
+            response_parts.append(f"🧠 **Key Themes Identified**: {', '.join(theme_list)}")
 
-    # Add data context
-    response_parts.append(f"📈 **Data Summary**: Analysis based on {data_context['total_responses']} survey responses.")
+            # Add some specific keywords from top themes
+            top_theme = list(themes.keys())[0]
+            if themes[top_theme]:
+                top_keywords = [word for word, count in themes[top_theme][:3]]
+                response_parts.append(f"   • **{top_theme}**: Features keywords like '{', '.join(top_keywords)}'")
 
-    # Add actionable insight
-    if 'avg_sentiment' in data_context:
-        avg_sentiment = data_context['avg_sentiment']
-        if avg_sentiment > 0.3:
-            response_parts.append(
-                "💡 **Recommendation**: The positive sentiment suggests this is an area of strength to build upon.")
-        elif avg_sentiment < -0.3:
-            response_parts.append("💡 **Recommendation**: Consider addressing the concerns raised in these responses.")
+    # Response quality insights
+    if 'response_lengths' in data_context and data_context['response_lengths']:
+        avg_length = np.mean(data_context['response_lengths'])
+        if avg_length > 100:
+            response_parts.append("💬 **Response Quality**: Detailed and thoughtful responses")
+        elif avg_length > 50:
+            response_parts.append("💬 **Response Quality**: Moderately detailed feedback")
         else:
-            response_parts.append("💡 **Recommendation**: Mixed responses suggest opportunities for improvement.")
+            response_parts.append("💬 **Response Quality**: Brief but focused responses")
+
+    # Data context summary
+    response_parts.append(
+        f"📈 **Analysis Scope**: Based on {data_context['total_responses']} survey responses across {len(data_context.get('countries', []))} countries")
+
+    # Enhanced actionable insights based on question type
+    if analysis['needs_recommendations']:
+        if 'avg_sentiment' in data_context:
+            avg_sentiment = data_context['avg_sentiment']
+            if avg_sentiment > 0.3:
+                response_parts.append(
+                    "💡 **Strategic Recommendation**: Build on this positive momentum and scale successful initiatives.")
+            elif avg_sentiment < -0.3:
+                response_parts.append(
+                    "💡 **Strategic Recommendation**: Address concerns through targeted interventions and improved communication.")
+            else:
+                response_parts.append(
+                    "💡 **Strategic Recommendation**: Focus on clarifying benefits and providing more support resources.")
+
+    # Add specific insights based on question content
+    if any(topic in analysis['specific_question'] for topic in ['ai', 'artificial intelligence']):
+        response_parts.append(
+            "🤖 **AI-Specific Insight**: Consider both ethical implications and practical applications in your strategy.")
+
+    if 'challenge' in analysis['specific_question']:
+        response_parts.append(
+            "🛠️ **Challenge Focus**: Prioritize addressing the most frequently mentioned obstacles first.")
+
+    if 'opportunity' in analysis['specific_question']:
+        response_parts.append("🚀 **Opportunity Focus**: Leverage these insights to create competitive advantages.")
 
     return "\n\n".join(response_parts)
 
 
 def create_dynamic_ai_chat(df_filtered, selected_col=None, themes=None, tab_name="main"):
-    """Enhanced AI chat with dynamic data-driven responses"""
+    """Enhanced AI chat with truly dynamic data-driven responses using Groq"""
 
     st.markdown("---")
-    st.markdown('<h3 class="section-header">💬 Dynamic AI Assistant</h3>', unsafe_allow_html=True)
+    st.markdown('<h3 class="section-header">💬 Dynamic AI Assistant (Groq Powered - FREE)</h3>', unsafe_allow_html=True)
 
     # Initialize chat history with unique key for each tab
     chat_history_key = f"dynamic_chat_history_{tab_name}"
@@ -624,16 +882,22 @@ def create_dynamic_ai_chat(df_filtered, selected_col=None, themes=None, tab_name
     # Get current data context
     data_context = get_data_context(df_filtered, selected_col)
 
+    # Display AI status
+    ai_status, status_msg = configure_groq_api()
+    status_color = "🟢" if ai_status else "🔴"
+    st.caption(f"{status_color} Groq AI Status: {status_msg}")
+
     # Display chat history
     for message in st.session_state[chat_history_key]:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
-    # Quick question suggestions with UNIQUE keys
+    # Enhanced quick question suggestions with context-awareness
     st.markdown("**💡 Try asking:**")
     col1, col2, col3 = st.columns(3)
 
-    quick_questions = [
+    # Context-aware quick questions
+    base_questions = [
         "What's the overall sentiment?",
         "Which emotions are most common?",
         "How do responses vary by region?",
@@ -642,7 +906,19 @@ def create_dynamic_ai_chat(df_filtered, selected_col=None, themes=None, tab_name
         "What actions should we take?"
     ]
 
-    for i, question in enumerate(quick_questions):
+    # Add context-specific questions if we have a selected column
+    if selected_col:
+        question_topic = selected_col.replace('_', ' ').title()
+        base_questions = [
+            f"What's the sentiment about {question_topic.lower()}?",
+            f"What emotions are expressed about {question_topic.lower()}?",
+            f"What are the main themes in {question_topic.lower()} responses?",
+            f"How do different regions view {question_topic.lower()}?",
+            f"What recommendations for {question_topic.lower()}?",
+            f"Compare positive and negative aspects of {question_topic.lower()}"
+        ]
+
+    for i, question in enumerate(base_questions):
         col = [col1, col2, col3][i % 3]
         with col:
             # Create UNIQUE key using tab_name and question index
@@ -652,12 +928,18 @@ def create_dynamic_ai_chat(df_filtered, selected_col=None, themes=None, tab_name
                 with st.chat_message("user"):
                     st.markdown(question)
 
-                # Generate response
-                analysis = analyze_user_question(question, data_context)
-                response = generate_dynamic_response(question, data_context, analysis, themes)
-
+                # Generate response - use Groq AI if available, otherwise enhanced fallback
                 with st.chat_message("assistant"):
-                    st.markdown(response)
+                    with st.spinner("Analyzing your data..."):
+                        if ai_status:
+                            context_text = f"Data Context: {json.dumps(data_context, indent=2)}"
+                            response = safe_groq_response(question, context_text)
+                        else:
+                            analysis = analyze_user_question(question, data_context)
+                            response = generate_dynamic_response(question, data_context, analysis, themes)
+
+                        st.markdown(response)
+
                 st.session_state[chat_history_key].append({"role": "assistant", "content": response})
                 st.rerun()
 
@@ -675,12 +957,14 @@ def create_dynamic_ai_chat(df_filtered, selected_col=None, themes=None, tab_name
 
         # Generate and display AI response
         with st.chat_message("assistant"):
-            with st.spinner("Analyzing your data..."):
-                # Analyze the question
-                analysis = analyze_user_question(user_question, data_context)
-
-                # Generate data-driven response
-                response = generate_dynamic_response(user_question, data_context, analysis, themes)
+            with st.spinner("Analyzing your data with Groq AI..."):
+                # Use Groq AI if available, otherwise enhanced fallback
+                if ai_status:
+                    context_text = f"Data Context: {json.dumps(data_context, indent=2)}"
+                    response = safe_groq_response(user_question, context_text)
+                else:
+                    analysis = analyze_user_question(user_question, data_context)
+                    response = generate_dynamic_response(user_question, data_context, analysis, themes)
 
                 st.markdown(response)
 
@@ -698,7 +982,8 @@ def create_dynamic_ai_chat(df_filtered, selected_col=None, themes=None, tab_name
 # --------------------------
 # 🎨 MAIN APPLICATION
 # --------------------------
-st.markdown('<h1 class="main-header">🎓 AI & Digital Learning Insights Dashboard</h1>', unsafe_allow_html=True)
+st.markdown('<h1 class="main-header">🎓 AI & Digital Learning Insights Dashboard (Groq Powered - FREE)</h1>',
+            unsafe_allow_html=True)
 
 # Quick Start Guide
 with st.expander("🚀 **Quick Start Guide**", expanded=True):
@@ -710,7 +995,7 @@ with st.expander("🚀 **Quick Start Guide**", expanded=True):
         **2. 📊 Explore Overview** → See dataset statistics and sample data  
         **3. 🔍 Analyze Questions** → Dive deep into each survey question  
         **4. 📈 Compare Groups** → See differences by demographics  
-        **5. 💬 Chat with Data** → Ask natural language questions  
+        **5. 💬 Chat with Data** → Ask natural language questions (Groq AI - FREE!)  
         """)
 
     with col2:
@@ -727,6 +1012,8 @@ if 'df' not in st.session_state:
     st.session_state.df = None
 if 'df_filtered' not in st.session_state:
     st.session_state.df_filtered = None
+if 'groq_api_key' not in st.session_state:
+    st.session_state.groq_api_key = ""
 
 # --- SIDEBAR ---
 with st.sidebar:
@@ -754,6 +1041,33 @@ with st.sidebar:
                     """)
                 else:
                     st.error("❌ Invalid file format")
+
+    # Groq API Configuration
+    with st.expander("🔐 Groq AI Configuration (FREE)", expanded=True):
+        st.markdown("**Configure Groq AI API**")
+
+        # Show current status
+        ai_status, status_msg = configure_groq_api()
+        status_color = "🟢" if ai_status else "🔴"
+        st.info(f"{status_color} **Status**: {status_msg}")
+
+        # Free tier notice
+        st.success("🎉 **FREE TIER**: Groq offers generous free usage limits! No billing required for basic usage.")
+
+        # API key input
+        api_key = st.text_input(
+            "Enter Groq API Key:",
+            type="password",
+            placeholder="gsk_...",
+            value=st.session_state.groq_api_key,
+            help="Get your FREE API key from https://console.groq.com/keys"
+        )
+
+        if api_key != st.session_state.groq_api_key:
+            st.session_state.groq_api_key = api_key
+            if api_key:
+                st.success("✅ API key saved! Testing connection...")
+                st.rerun()
 
     if st.session_state.df is not None:
         with st.expander("🔍 Filters", expanded=True):
@@ -911,11 +1225,12 @@ if st.session_state.df is not None:
                 st.dataframe(value_counts, use_container_width=True)
 
     with tab5:
-        st.markdown('<h2 class="section-header">💬 Dynamic AI Analysis Assistant</h2>', unsafe_allow_html=True)
+        st.markdown('<h2 class="section-header">💬 Dynamic AI Analysis Assistant (Groq Powered - FREE)</h2>',
+                    unsafe_allow_html=True)
 
         if df is not None:
             # Show data overview
-            st.success(f"✅ AI Assistant has access to {len(df)} survey responses")
+            st.success(f"✅ Groq AI Assistant has access to {len(df)} survey responses")
 
             # Data summary cards
             col1, col2, col3, col4 = st.columns(4)
@@ -943,12 +1258,14 @@ else:
     <p>To get started, please upload your survey data using the panel on the left.</p>
     <p><b>Expected data format:</b> Excel file with columns for Region, Country, Position, Institution Type, 
     and survey questions about AI challenges, opportunities, and learning impacts.</p>
+    <p><b>🚀 New:</b> This version is powered by Groq AI for ultra-fast, FREE data analysis capabilities!</p>
     </div>
     """, unsafe_allow_html=True)
 
 # Footer
 st.markdown("---")
-st.caption("Built with ❤️ using Streamlit | VADER Sentiment Analysis | Ekman Emotions | Interactive Visualizations")
+st.caption(
+    "Built with ❤️ using Streamlit | Groq AI (FREE) | VADER Sentiment Analysis | Ekman Emotions | Interactive Visualizations")
 
 # Performance optimization
 st.markdown("""
