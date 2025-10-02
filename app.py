@@ -872,7 +872,7 @@ def create_dynamic_ai_chat(df_filtered, selected_col=None, themes=None, tab_name
     """Enhanced AI chat with truly dynamic data-driven responses using Groq"""
 
     st.markdown("---")
-    st.markdown('<h3 class="section-header">💬 Dynamic AI Assistant (Groq Powered - FREE)</h3>', unsafe_allow_html=True)
+    st.markdown('<h3 class="section-header">💬 Dynamic AI Assistant</h3>', unsafe_allow_html=True)
 
     # Initialize chat history with unique key for each tab
     chat_history_key = f"dynamic_chat_history_{tab_name}"
