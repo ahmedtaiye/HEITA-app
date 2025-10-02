@@ -1052,7 +1052,7 @@ with st.sidebar:
         st.info(f"{status_color} **Status**: {status_msg}")
 
         # Free tier notice
-        st.success("🎉 **FREE TIER**: Groq offers generous free usage limits! No billing required for basic usage.")
+        st.success("🎉 **GROQ**")
 
         # API key input
         api_key = st.text_input(
