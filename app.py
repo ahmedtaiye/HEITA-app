@@ -982,7 +982,7 @@ def create_dynamic_ai_chat(df_filtered, selected_col=None, themes=None, tab_name
 # --------------------------
 # 🎨 MAIN APPLICATION
 # --------------------------
-st.markdown('<h1 class="main-header">🎓 AI & Digital Learning Insights Dashboard (Groq Powered - FREE)</h1>',
+st.markdown('<h1 class="main-header">🎓 AI & Digital Learning Insights Dashboard</h1>',
             unsafe_allow_html=True)
 
 # Quick Start Guide
