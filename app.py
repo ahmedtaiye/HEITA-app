@@ -1225,7 +1225,7 @@ if st.session_state.df is not None:
                 st.dataframe(value_counts, use_container_width=True)
 
     with tab5:
-        st.markdown('<h2 class="section-header">💬 Dynamic AI Analysis Assistant (Groq Powered - FREE)</h2>',
+        st.markdown('<h2 class="section-header">💬 Dynamic AI Analysis Assistant </h2>',
                     unsafe_allow_html=True)
 
         if df is not None:
